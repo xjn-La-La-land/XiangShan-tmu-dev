@@ -32,7 +32,8 @@ case class ExeUnitParams(
   // used in bypass to select data of exu output
   var exuIdx: Int = -1
   var backendParam: BackendParams = null
-
+  
+  // HINT: Exu中fu各种类型操作数的最大个数
   val numIntSrc: Int = fuConfigs.map(_.numIntSrc).max
   val numFpSrc: Int = fuConfigs.map(_.numFpSrc).max
   val numVecSrc: Int = fuConfigs.map(_.numVecSrc).max

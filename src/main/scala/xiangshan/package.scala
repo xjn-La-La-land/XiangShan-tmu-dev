@@ -383,6 +383,18 @@ package object xiangshan {
     def apply() = UInt(FuOpTypeWidth.W)
   }
 
+  // HINT: FuOpType for TMU
+  object TMUOpType {
+    def tileload  = "b100".U
+    def tilestore = "b110".U
+    def tdpbss    = "b011".U
+    def tdpbsu    = "b010".U
+    def tdpbus    = "b001".U
+    def tdpbuu    = "b000".U
+
+    def isTdp(func: UInt) = func(2) === "b0".U
+  }
+
   object VSETOpType {
     val setVlmaxBit = 0
     val keepVlBit   = 1

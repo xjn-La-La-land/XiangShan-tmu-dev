@@ -190,6 +190,8 @@ object OPCODE5Bit {
   val RESERVED_1 = "b11_101".U
   val CUSTOM_3   = "b11_110".U
   val INSTge80b  = "b11_111".U
+
+  val XTM        = CUSTOM_0    // HINT:  xtm 矩阵自定义指令
 }
 
 object OPCODE7Bit {

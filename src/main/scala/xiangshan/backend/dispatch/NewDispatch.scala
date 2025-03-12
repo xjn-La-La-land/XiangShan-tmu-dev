@@ -48,27 +48,34 @@ class CoreDispatchTopDownIO extends Bundle {
 // TODO delete trigger message from frontend to iq
 class NewDispatch(implicit p: Parameters) extends XSModule with HasPerfEvents with HasVLSUParameters {
   // std IQ donot need dispatch, only copy sta IQ, but need sta IQ's ready && std IQ's ready
-  val allIssueParams = backendParams.allIssueParams.filter(_.StdCnt == 0)
-  val allExuParams = allIssueParams.map(_.exuBlockParams).flatten
-  val allFuConfigs = allExuParams.map(_.fuConfigs).flatten.toSet.toSeq
+  val allIssueParams = backendParams.allIssueParams.filter(_.StdCnt == 0) // HINT: 所有的issueQueue
+  val allExuParams = allIssueParams.map(_.exuBlockParams).flatten         // HINT: 所有的Exu
+  val allFuConfigs = allExuParams.map(_.fuConfigs).flatten.toSet.toSeq    // HINT: 所有种类的Fu
   val sortedFuConfigs = allFuConfigs.sortBy(_.fuType.id)
   println(s"[NewDispatch] ${allExuParams.map(_.name)}")
   println(s"[NewDispatch] ${allFuConfigs.map(_.name)}")
   println(s"[NewDispatch] ${allFuConfigs.map(_.fuType.id)}")
   println(s"[NewDispatch] ${sortedFuConfigs.map(_.name)}")
   println(s"[NewDispatch] ${sortedFuConfigs.map(_.fuType.id)}")
-  val fuConfigsInIssueParams = allIssueParams.map(_.allExuParams.map(_.fuConfigs).flatten.toSet.toSeq)
-  val fuMapIQIdx = sortedFuConfigs.map( fu => {
+  val fuConfigsInIssueParams = allIssueParams.map(_.allExuParams.map(_.fuConfigs).flatten.toSet.toSeq) // HINT: 每个issueQueue能够发射到的fu种类列表
+  val fuMapIQIdx = sortedFuConfigs.map( fu => {                                                        // HINT: 每种fu对应的issueQueue编号列表
     val fuInIQIdx = fuConfigsInIssueParams.zipWithIndex.filter { case (f, i) => f.contains(fu) }.map(_._2)
     (fu -> fuInIQIdx)
    }
-  )
+  )  // HINT: fuMapIQIdx jmp -> List(0, 1, 2),
+     // HINT:            brh -> List(0, 1, 2),
+     // HINT:            alu -> List(0, 1, 2, 3),
+     // HINT:            mul -> List(0, 1) ...
   fuMapIQIdx.map { case (fu, iqidx) =>
     println(s"[NewDispatch] ${fu.name} $iqidx")
   }
   val sameIQIdxFus = fuMapIQIdx.map{ case (fu, iqidx) =>
     fuMapIQIdx.filter(_._2 == iqidx).map(_._1) -> iqidx
   }.toSet.toSeq
+  // HINT: sameExuIdxFus (alu)      -> List(0, 1, 2, 3),
+  // HINT:               (mul, div) -> List(0, 1),
+  // HINT:               (brh, jmp) -> List(0, 1, 2), ...
+
   val needMultiIQ = sameIQIdxFus.sortBy(_._1.head.fuType.id).filter(_._2.size > 1)
   val needSingleIQ = sameIQIdxFus.sortBy(_._1.head.fuType.id).filter(_._2.size == 1)
   needMultiIQ.map { case (fus, iqidx) =>
@@ -77,8 +84,8 @@ class NewDispatch(implicit p: Parameters) extends XSModule with HasPerfEvents wi
   needSingleIQ.map { case (fus, iqidx) =>
     println(s"[NewDispatch] needSingleIQ: ${fus.map(_.name)} $iqidx")
   }
-  val fuConfigsInExuParams = allExuParams.map(_.fuConfigs)
-  val fuMapExuIdx = sortedFuConfigs.map { case fu => {
+  val fuConfigsInExuParams = allExuParams.map(_.fuConfigs) // HINT: 每个Exu包含的fu列表
+  val fuMapExuIdx = sortedFuConfigs.map { case fu => {     // HINT: 每种fu对应的Exu编号列表
     val fuInExuIdx = fuConfigsInExuParams.zipWithIndex.filter { case (f, i) => f.contains(fu) }.map(_._2)
     (fu -> fuInExuIdx)
     }
@@ -86,13 +93,24 @@ class NewDispatch(implicit p: Parameters) extends XSModule with HasPerfEvents wi
   val sameExuIdxFus = fuMapExuIdx.map { case (fu, exuidx) =>
     fuMapExuIdx.filter(_._2 == exuidx).map(_._1) -> exuidx
   }.toSet.toSeq
+
+  // HINT: sameExuIdxFus (alu)      -> List(0, 2, 4, 6),
+  // HINT:               (jmp, brh) -> List(1, 3, 5), ...
   val needMultiExu = sameExuIdxFus.sortBy(_._1.head.fuType.id).filter(_._2.size > 1).filter{ x =>
     x._1.map(y => fuMapIQIdx.filter(_._1 == y).head._2.size > 1).reduce(_ && _)
   }
 
   val exuNum = allExuParams.size
-  val maxIQSize = allIssueParams.map(_.numEntries).max
-  val IQEnqSum = allIssueParams.map(_.numEnq).sum
+  val maxIQSize = allIssueParams.map(_.numEntries).max // HINT: 所有issueQueue中最大的容量
+  val IQEnqSum = allIssueParams.map(_.numEnq).sum      // HINT: 所有issueQueue一拍能接收的项数总和
+
+  println(s"[NewDispatch] exuNum: $exuNum")
+  needMultiExu.map { case (fus, exuidx) => 
+    println(s"[NewDispatch] needMultiExu: ${fus.map(_.name)} $exuidx") 
+  }
+
+  println(s"[NewDispatch] maxIQSize: $maxIQSize") // HINT: maxIQSize = 24
+  println(s"[NewDispatch] IQEnqSum: $IQEnqSum")   // HINT: IQEnqSum  = 34
 
   val io = IO(new Bundle {
     // from rename
@@ -102,7 +120,7 @@ class NewDispatch(implicit p: Parameters) extends XSModule with HasPerfEvents wi
     // enq Rob
     val enqRob = Flipped(new RobEnqIO)
     // IssueQueues
-    val IQValidNumVec = Vec(exuNum, Input(UInt(maxIQSize.U.getWidth.W)))
+    val IQValidNumVec = Vec(exuNum, Input(UInt(maxIQSize.U.getWidth.W))) // HINT: 每个issueQueue的有效项数
     val toIssueQueues = Vec(IQEnqSum, DecoupledIO(new DynInst))
     // to busyTable
     // set preg state to ready (write back regfile)
@@ -171,7 +189,7 @@ class NewDispatch(implicit p: Parameters) extends XSModule with HasPerfEvents wi
   val issueQueueNum = allIssueParams.size
   // int fp vec v0 vl
   val numRegType = 5
-  val idxRegTypeInt = allFuConfigs.map(x => {
+  val idxRegTypeInt = allFuConfigs.map(x => { // HINT: int 寄存器操作数编号
     x.srcData.map(xx => {
       xx.zipWithIndex.filter(y => IntRegSrcDataSet.contains(y._1)).map(_._2)
     }).flatten
@@ -201,17 +219,17 @@ class NewDispatch(implicit p: Parameters) extends XSModule with HasPerfEvents wi
   println(s"[NewDispatch] idxRegTypeVec: $idxRegTypeVec")
   println(s"[NewDispatch] idxRegTypeV0: $idxRegTypeV0")
   println(s"[NewDispatch] idxRegTypeVl: $idxRegTypeVl")
-  val numRegSrc: Int = issueBlockParams.map(_.exuBlockParams.map(
+  val numRegSrc: Int = issueBlockParams.map(_.exuBlockParams.map(    // HINT: 所有Exu的最大寄存器操作数个数
     x => if (x.hasStdFu) x.numRegSrc + 1 else x.numRegSrc
   ).max).max
 
-  val numRegSrcInt: Int = issueBlockParams.map(_.exuBlockParams.map(
+  val numRegSrcInt: Int = issueBlockParams.map(_.exuBlockParams.map( // HINT: 所有Exu的最大int寄存器操作数个数
     x => if (x.hasStdFu) x.numIntSrc + 1 else x.numIntSrc
   ).max).max
-  val numRegSrcFp: Int = issueBlockParams.map(_.exuBlockParams.map(
+  val numRegSrcFp: Int = issueBlockParams.map(_.exuBlockParams.map(  // HINT: 所有Exu的最大fp寄存器操作数个数
     x => if (x.hasStdFu) x.numFpSrc + 1 else x.numFpSrc
   ).max).max
-  val numRegSrcVf: Int = issueBlockParams.map(_.exuBlockParams.map(
+  val numRegSrcVf: Int = issueBlockParams.map(_.exuBlockParams.map(  // HINT: 所有Exu的最大vec寄存器操作数个数
     x => x.numVecSrc
   ).max).max
   val numRegSrcV0: Int = issueBlockParams.map(_.exuBlockParams.map(
@@ -236,7 +254,7 @@ class NewDispatch(implicit p: Parameters) extends XSModule with HasPerfEvents wi
   val busyTables = Seq(intBusyTable, fpBusyTable, vecBusyTable, v0BusyTable, vlBusyTable)
   val wbPregs = Seq(io.wbPregsInt, io.wbPregsFp, io.wbPregsVec, io.wbPregsV0, io.wbPregsVl)
   val idxRegType = Seq(idxRegTypeInt, idxRegTypeFp, idxRegTypeVec, idxRegTypeV0, idxRegTypeVl)
-  val allocPregsValid = Wire(Vec(busyTables.size, Vec(RenameWidth, Bool())))
+  val allocPregsValid = Wire(Vec(busyTables.size, Vec(RenameWidth, Bool())))  // HINT: Bool[6][5] 5种寄存器类型，6条指令宽度
   allocPregsValid(0) := VecInit(fromRename.map(x => x.valid && x.bits.rfWen && !x.bits.eliminatedMove))
   allocPregsValid(1) := VecInit(fromRename.map(x => x.valid && x.bits.fpWen))
   allocPregsValid(2) := VecInit(fromRename.map(x => x.valid && x.bits.vecWen))
@@ -248,7 +266,7 @@ class NewDispatch(implicit p: Parameters) extends XSModule with HasPerfEvents wi
       sink.valid := source
       sink.bits := fromRename(i).bits.pdest
     }}
-  })
+  }) // HINT: 分配写回物理寄存器
   val wakeUp = io.wakeUpAll.wakeUpInt ++ io.wakeUpAll.wakeUpFp ++ io.wakeUpAll.wakeUpVec ++ io.wakeUpAll.wakeUpMem
   busyTables.zip(wbPregs).zip(allocPregs).map{ case ((b, w), a) => {
     b.io.wakeUpInt := io.wakeUpAll.wakeUpInt
@@ -264,8 +282,9 @@ class NewDispatch(implicit p: Parameters) extends XSModule with HasPerfEvents wi
   rcTagTable.io.wakeupFromIQ := io.wakeUpAll.wakeUpInt ++ io.wakeUpAll.wakeUpMem
   rcTagTable.io.og0Cancel := io.og0Cancel
   rcTagTable.io.ldCancel := io.ldCancel
+  // HINT: read busyTable
   busyTables.zip(idxRegType).zipWithIndex.map { case ((b, idxseq), i) => {
-    val readAddr = VecInit(fromRename.map(x => x.bits.psrc.zipWithIndex.filter(xx => idxseq.contains(xx._2)).map(_._1)).flatten)
+    val readAddr = VecInit(fromRename.map(x => x.bits.psrc.zipWithIndex.filter(xx => idxseq.contains(xx._2)).map(_._1)).flatten) // HINT: 每条指令(可能)需要读取的寄存器编号，flatten成一个Seq
     val readValid = VecInit(fromRename.map(x => x.bits.psrc.zipWithIndex.filter(xx => idxseq.contains(xx._2)).map(y => x.valid && SrcType.isXp(x.bits.srcType(y._2)))).flatten)
     b.io.read.map(_.req).zip(readAddr).map(x => x._1 := x._2)
     // only int src need srcLoadDependency, src0 src1
@@ -363,7 +382,7 @@ class NewDispatch(implicit p: Parameters) extends XSModule with HasPerfEvents wi
     for (i <- 0 until iqNum) {
       for (j <- 0 until iqNum) {
         if (i == j) compareMatrix(i)(j) := false.B
-        else if (i < j) compareMatrix(i)(j) := issueQueueCount(exuidx(i)) < issueQueueCount(exuidx(j))
+        else if (i < j) compareMatrix(i)(j) := issueQueueCount(exuidx(i)) < issueQueueCount(exuidx(j)) // HINT: compareMatrix(i)(j) = true, 说明i号issueQueue的有效项数小于j号issueQueue
         else compareMatrix(i)(j) := !compareMatrix(j)(i)
       }
     }
@@ -393,7 +412,7 @@ class NewDispatch(implicit p: Parameters) extends XSModule with HasPerfEvents wi
   }
   }
   val fuConfigSeq = needMultiExu.map(_._1)
-  val fuTypeOH = Wire(Vec(renameWidth, Vec(needMultiExu.size, Bool())))
+  val fuTypeOH = Wire(Vec(renameWidth, Vec(needMultiExu.size, Bool()))) // HINT: 每一条指令对应的 multi IQ Fu(有多个 IQ 连接的Fu)类型
   fuTypeOH.zip(renameIn).map{ case(oh, in) => {
     oh := fuConfigSeq.map(x => x.map(xx => in.bits.fuType(xx.fuType.id)).reduce(_ || _) && in.valid)
   }
@@ -410,33 +429,33 @@ class NewDispatch(implicit p: Parameters) extends XSModule with HasPerfEvents wi
         }
       }
     }
-  }}
-  val uopSelIQ = Reg(Vec(renameWidth, Vec(issueQueueNum, Bool())))
-  val fuTypeOHSingle = Wire(Vec(renameWidth, Vec(needSingleIQ.size, Bool())))
+  }} // HINT: 对于第 idx 条指令，计算在第 0 到第 idx-1 条指令中，每种 Fu 类型的指令数
+  val uopSelIQ = Reg(Vec(renameWidth, Vec(issueQueueNum, Bool()))) // HINT: 关键信号！每一条指令对应的 IQ one-hot选择信号
+  val fuTypeOHSingle = Wire(Vec(renameWidth, Vec(needSingleIQ.size, Bool()))) // HINT: 每一条指令对应的 single IQ Fu(只与一个 IQ 连接的Fu) 类型
   fuTypeOHSingle.zip(renameIn).map{ case (oh, in) => {
     oh := needSingleIQ.map(_._1).map(x => x.map(xx => in.valid && in.bits.fuType(xx.fuType.id)).reduce(_ || _))
   }}
-  val uopSelIQSingle = Wire(Vec(needSingleIQ.size, Vec(issueQueueNum, Bool())))
+  val uopSelIQSingle = Wire(Vec(needSingleIQ.size, Vec(issueQueueNum, Bool()))) // HINT: 每一种 single IQ Fu 类型对应的 IQ 选择信号
   uopSelIQSingle := VecInit(needSingleIQ.map(_._2).flatten.map(x => VecInit((1.U(issueQueueNum.W) << x)(issueQueueNum-1, 0).asBools)))
   uopSelIQ.zipWithIndex.map{ case (u, i) => {
     when(io.toRenameAllFire){
       u := Mux(renameIn(i).valid,
                 Mux(fuTypeOH(i).asUInt.orR,
-                  Mux1H(fuTypeOH(i), minIQSelAll)(Mux1H(fuTypeOH(i), popFuTypeOH(i))),
-                  Mux1H(fuTypeOHSingle(i), uopSelIQSingle)),
+                  Mux1H(fuTypeOH(i), minIQSelAll)(Mux1H(fuTypeOH(i), popFuTypeOH(i))), // multi IQ Fu
+                  Mux1H(fuTypeOHSingle(i), uopSelIQSingle)),                           // single IQ Fu
                 0.U.asTypeOf(u)
               )
     }.elsewhen(io.fromRename(i).fire){
       u := 0.U.asTypeOf(u)
     }
   }}
-  val uopSelIQMatrix = Wire(Vec(renameWidth, Vec(issueQueueNum, UInt(renameWidth.U.getWidth.W))))
+  val uopSelIQMatrix = Wire(Vec(renameWidth, Vec(issueQueueNum, UInt(renameWidth.U.getWidth.W)))) // HINT: uopSelIQMatrix[i][j] 表示第0~i条指令中，选择第 j 个IQ的指令数量
   uopSelIQMatrix.zipWithIndex.map{ case (u, i) => {
     u.zipWithIndex.map{ case (uu, j) => {
      uu := PopCount(uopSelIQ.take(i+1).map(x => x.zipWithIndex.filter(_._2 == j).map(_._1)).flatten)
     }}
   }}
-  val IQSelUop = Wire(Vec(IQEnqSum, ValidIO(new DynInst)))
+  val IQSelUop = Wire(Vec(IQEnqSum, ValidIO(new DynInst))) // HINT: 关键信号！下一拍将要进入 IQ 的指令
   val uopBlockByIQ = Wire(Vec(renameWidth, Bool()))
   val allowDispatch = Wire(Vec(renameWidth, Bool()))
   val thisCanActualOut = Wire(Vec(renameWidth, Bool()))
@@ -459,7 +478,7 @@ class NewDispatch(implicit p: Parameters) extends XSModule with HasPerfEvents wi
   allIssueParams.zipWithIndex.map{ case(issue, iqidx) => {
     for (i <- 0 until issue.numEnq){
       val oh = Wire(Vec(renameWidth, Bool())).suggestName(s"oh_IQSelUop_$temp")
-      oh := uopSelIQMatrix.map(_(iqidx)).map(_ === (i+1).U)
+      oh := uopSelIQMatrix.map(_(iqidx)).map(_ === (i+1).U) // HINT: oh[k] = true.B 表示第0~k条指令中有 i+1 条指令选择了 iqidx 号 IQ
       IQSelUop(temp) := PriorityMux(oh, fromRenameUpdate)
       // there only assign valid not use PriorityMuxDefalut for better timing
       IQSelUop(temp).valid := PriorityMuxDefault(oh.zip(fromRenameUpdate.map(_.valid)), false.B)
@@ -584,7 +603,7 @@ class NewDispatch(implicit p: Parameters) extends XSModule with HasPerfEvents wi
   }
 
   private val isVlsType = fuType.map(fuTypeItem => FuType.isVls(fuTypeItem)).zip(fromRename.map(_.valid)).map(x => x._1 && x._2)
-  private val isLSType = fuType.map(fuTypeItem => FuType.isLoad(fuTypeItem) || FuType.isStore(fuTypeItem)).zip(fromRename.map(_.valid)).map(x => x._1 && x._2)
+  private val isLSType = fuType.map(fuTypeItem => FuType.isLoadStore(fuTypeItem)).zip(fromRename.map(_.valid)).map(x => x._1 && x._2)
   private val isSegment = fuType.map(fuTypeItem => FuType.isVsegls(fuTypeItem)).zip(fromRename.map(_.valid)).map(x => x._1 && x._2)
   // TODO
   private val isUnitStride = fuOpType.map(fuOpTypeItem => LSUOpType.isAllUS(fuOpTypeItem))
@@ -631,7 +650,7 @@ class NewDispatch(implicit p: Parameters) extends XSModule with HasPerfEvents wi
   }
   // renameIn
   private val isVlsTypeRename = io.renameIn.map(x => x.valid && FuType.isVls(x.bits.fuType))
-  private val isLSTypeRename = io.renameIn.map(x => x.valid && (FuType.isLoad(x.bits.fuType)) || FuType.isStore(x.bits.fuType))
+  private val isLSTypeRename = io.renameIn.map(x => x.valid && FuType.isLoadStore(x.bits.fuType))
   private val isUnitStrideRename = io.renameIn.map(x => LSUOpType.isAllUS(x.bits.fuOpType))
   private val conserveFlowsIs16Rename = VecInit(isVlsTypeRename.zipWithIndex.map { case (isVlsTyepItem, index) =>
     isVlsTyepItem && !isUnitStrideRename(index)
