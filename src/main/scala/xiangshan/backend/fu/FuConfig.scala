@@ -840,18 +840,15 @@ object FuConfig {
   val TmuCfg: FuConfig = FuConfig(
     name = "tmu",
     fuType = FuType.tmu,
-    fuGen = null,
+    fuGen = (p: Parameters, cfg: FuConfig) => Module(new Tmu(cfg)(p).suggestName("Tmu")),
     srcData = Seq(
       Seq(IntData(), IntData()),
     ), // tileloadd, tilestored need 2 Reg src
     piped = false,
     latency = UncertainLatency(),
-    hasInputBuffer = (false, 0, false), // TODO: add input buffer
     exceptionOut = Seq(), // TODO: add exception
-    hasLoadError = true,
-    flushPipe = true,
-    // replayInst = false,
-    // trigger = false,
+    hasLoadError = false, // TODO: add load error
+    flushPipe = false,
     immType = Set(SelImm.IMM_S),
   )
 
