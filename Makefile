@@ -59,7 +59,7 @@ JVM_XMX ?= 40G
 JVM_XSS ?= 256m
 
 # mill arguments for build.sc
-MILL_BUILD_ARGS = -Djvm-xmx=$(JVM_XMX) -Djvm-xss=$(JVM_XSS)
+MILL_BUILD_ARGS =-Djvm-xmx=$(JVM_XMX) -Djvm-xss=$(JVM_XSS)
 
 # common chisel args
 FPGA_MEM_ARGS = --firtool-opt "--repl-seq-mem --repl-seq-mem-file=$(TOP).$(RTL_SUFFIX).conf"
@@ -277,6 +277,16 @@ pldm-run:
 
 pldm-debug:
 	$(MAKE) -C ./difftest pldm-debug SIM_TOP=SimTop DESIGN_DIR=$(NOOP_HOME) NUM_CORES=$(NUM_CORES) RTL_SUFFIX=$(RTL_SUFFIX)
+
+# TODO: wave -> 查看生成的波形
+WAVE_DIR = $(NOOP_HOME)/wave
+check-wave: # gtkwave is too stupid!
+	@if [ -f "$(WAVE_DIR)/wave.vcd" ]; then \
+		echo "Opening GTKWave with dump.vcd..."; \
+		gtkwave -o -c 10 --dark --autosavename --saveonexit "$(WAVE_DIR)/wave.vcd"; \
+	else \
+		echo "Waveform file does not exist!"; \
+	fi
 
 include Makefile.test
 

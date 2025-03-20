@@ -42,3 +42,4 @@ class Tmu (cfg: FuConfig)(implicit p: Parameters) extends FuncUnit(cfg) {
   io.out.bits.ctrl.robIdx := tmuModule.io.out.bits.robIdx
 
 }
+
