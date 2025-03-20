@@ -41,6 +41,8 @@ case class SchdBlockParams(
 
   def FenceCnt: Int = issueBlockParams.map(_.FenceCnt).sum
 
+  def TmuCnt: Int = issueBlockParams.map(_.TmuCnt).sum
+
   def BkuCnt: Int = issueBlockParams.map(_.BkuCnt).sum
 
   def VsetCnt: Int = issueBlockParams.map(_.VsetCnt).sum
@@ -74,6 +76,8 @@ case class SchdBlockParams(
   def hasCSR = CsrCnt > 0
 
   def hasFence = FenceCnt > 0
+
+  def hasTmu = TmuCnt > 0 // HINT: ExuBlock 包含 tmu
 
   def numWriteIntRf: Int = issueBlockParams.map(_.numWriteIntRf).sum
 

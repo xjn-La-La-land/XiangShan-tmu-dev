@@ -267,6 +267,8 @@ case class ExeUnitParams(
 
   def hasJmpFu = fuConfigs.map(_.fuType == FuType.jmp).reduce(_ || _)
 
+  def hasTmuFu = fuConfigs.map(_.fuType == FuType.tmu).reduce(_ || _) // 判断 tmu 是否在这个 Exu 中
+
   def hasLoadFu = fuConfigs.map(_.name == "ldu").reduce(_ || _)
 
   def hasVLoadFu = fuConfigs.map(_.fuType == FuType.vldu).reduce(_ || _)

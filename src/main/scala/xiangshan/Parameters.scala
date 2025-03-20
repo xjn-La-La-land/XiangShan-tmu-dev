@@ -310,6 +310,15 @@ case class XSCoreParameters
     saveLevel = false,
     lgMaxSize = 4
   ),
+  tmutlbParameters: TLBParameters = TLBParameters(
+    name = "tmutlb",
+    NWays = 48,
+    outReplace = false,
+    partialStaticPMP = true,
+    outsideRecvFlush = true,
+    saveLevel = false,
+    lgMaxSize = 4
+  ),
   l2ToL1tlbParameters: TLBParameters = TLBParameters(
     name = "l2tlb",
     NWays = 48,
@@ -401,7 +410,6 @@ case class XSCoreParameters
         ExeUnitParams("ALU1", Seq(AluCfg, MulCfg, BkuCfg), Seq(IntWB(port = 1, 0)), Seq(Seq(IntRD(2, 0)), Seq(IntRD(3, 0))), true, 2),
         ExeUnitParams("BJU1", Seq(BrhCfg, JmpCfg), Seq(IntWB(port = 1, 1)), Seq(Seq(IntRD(4, 1)), Seq(IntRD(5, 1))), true, 2),
       ), numEntries = IssueQueueSize, numEnq = 2, numComp = IssueQueueCompEntrySize),
-      // HINT: Add TMU in this Exu
       IssueBlockParams(Seq(
         ExeUnitParams("ALU2", Seq(AluCfg), Seq(IntWB(port = 2, 0)), Seq(Seq(IntRD(4, 0)), Seq(IntRD(5, 0))), true, 2),
         ExeUnitParams("BJU2", Seq(BrhCfg, JmpCfg, I2fCfg, VSetRiWiCfg, VSetRiWvfCfg, I2vCfg), Seq(IntWB(port = 4, 0), VfWB(2, 0), V0WB(port = 2, 0), VlWB(port = intSchdVlWbPort, 0), FpWB(port = 2, 1)), Seq(Seq(IntRD(2, 1)), Seq(IntRD(3, 1)))),
@@ -842,6 +850,7 @@ trait HasXSParameter {
   def sttlbParams = coreParams.sttlbParameters
   def hytlbParams = coreParams.hytlbParameters
   def pftlbParams = coreParams.pftlbParameters
+  def tmutlbParams = coreParams.tmutlbParameters
   def l2ToL1Params = coreParams.l2ToL1tlbParameters
   def btlbParams = coreParams.btlbParameters
   def l2tlbParams = coreParams.l2tlbParameters

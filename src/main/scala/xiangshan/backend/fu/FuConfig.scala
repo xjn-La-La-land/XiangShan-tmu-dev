@@ -848,7 +848,6 @@ object FuConfig {
     latency = UncertainLatency(),
     exceptionOut = Seq(), // TODO: add exception
     hasLoadError = false, // TODO: add load error
-    flushPipe = false,
     immType = Set(SelImm.IMM_S),
   )
 

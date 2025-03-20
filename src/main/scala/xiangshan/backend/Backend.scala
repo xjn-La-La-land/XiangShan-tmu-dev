@@ -52,6 +52,10 @@ import xiangshan.mem.{LqPtr, LsqEnqIO, SqPtr}
 
 import scala.collection.mutable
 
+import xiangshan.cache.mmu.TlbRequestIO
+import freechips.rocketchip.tilelink.TLClientNode
+import xiangshan.backend.fu.TmuParams
+
 class Backend(val params: BackendParams)(implicit p: Parameters) extends LazyModule
   with HasXSParameter {
   override def shouldBeInlined: Boolean = false
@@ -619,6 +623,11 @@ class BackendInlinedImp(override val wrapper: BackendInlined)(implicit p: Parame
   private val fenceio = intExuBlock.io.fenceio.get
   io.fenceio <> fenceio
 
+  // tmu memory io connection
+  private val tmu2mem = intExuBlock.io.tmu2mem.get
+  io.mem.tmu2mem.get.tlb <> tmu2mem.tlb
+  io.mem.tmu2mem.get.node := tmu2mem.node
+
   // to fpExuBlock
   fpExuBlock.io.flush := ctrlBlock.io.toExuBlock.flush
   for (i <- 0 until fpExuBlock.io.in.length) {
@@ -943,7 +952,7 @@ class BackendInlinedImp(override val wrapper: BackendInlined)(implicit p: Parame
   io.toTop.cpuCriticalError := csrio.criticalErrorState
 }
 
-class BackendMemIO(implicit p: Parameters, params: BackendParams) extends XSBundle {
+class BackendMemIO(implicit p: Parameters, params: BackendParams) extends XSBundle with TmuParams {
   // Since fast load replay always use load unit 0, Backend flips two load port to avoid conflicts
   val flippedLda = true
   // params alias
@@ -1010,6 +1019,11 @@ class BackendMemIO(implicit p: Parameters, params: BackendParams) extends XSBund
   val sfence = Output(new SfenceBundle)
   val isStoreException = Output(Bool())
   val isVlsException = Output(Bool())
+
+  val tmu2mem = Option.when(params.hasTmu)(new Bundle {
+    val tlb = new TlbRequestIO
+    val node = TLClientNode(Seq(clientParameters))
+  })
 
   // ATTENTION: The issue ports' sequence order should be the same as IQs' deq config
   private [backend] def issueUops: Seq[DecoupledIO[MemExuInput]] = {

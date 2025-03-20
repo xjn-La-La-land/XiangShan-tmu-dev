@@ -29,9 +29,12 @@ import xiangshan.backend.datapath.WbConfig.{PregWB, _}
 import xiangshan.backend.fu.FuType
 import xiangshan.backend.fu.vector.Bundles.{VType, Vxrm}
 import xiangshan.backend.fu.fpu.Bundles.Frm
-import xiangshan.backend.fu.wrapper.{CSRInput, CSRToDecode}
+import xiangshan.backend.fu.wrapper.{CSRInput, CSRToDecode, Tmu}
+import xiangshan.cache.mmu.TlbRequestIO
+import xiangshan.backend.fu.TmuParams
+import freechips.rocketchip.tilelink.TLClientNode
 
-class ExeUnitIO(params: ExeUnitParams)(implicit p: Parameters) extends XSBundle {
+class ExeUnitIO(params: ExeUnitParams)(implicit p: Parameters) extends XSBundle with TmuParams {
   val flush = Flipped(ValidIO(new Redirect()))
   val in = Flipped(DecoupledIO(new ExuInput(params, hasCopySrc = true)))
   val out = DecoupledIO(new ExuOutput(params))
@@ -45,6 +48,9 @@ class ExeUnitIO(params: ExeUnitParams)(implicit p: Parameters) extends XSBundle 
   val vlIsZero = Option.when(params.writeVConfig)(Output(Bool()))
   val vlIsVlmax = Option.when(params.writeVConfig)(Output(Bool()))
   val instrAddrTransType = Option.when(params.hasJmpFu || params.hasBrhFu)(Input(new AddrTransType))
+  // tmu memory io
+  val tlb = Option.when(params.hasTmuFu)(new TlbRequestIO())
+  val node = Option.when(params.hasTmuFu)(TLClientNode(Seq(clientParameters)))
 }
 
 class ExeUnit(val exuParams: ExeUnitParams)(implicit p: Parameters) extends LazyModule {
@@ -405,6 +411,15 @@ class ExeUnitImp(
   io.out.bits.debug     := 0.U.asTypeOf(io.out.bits.debug)
   io.out.bits.debug.isPerfCnt := funcUnits.map(_.io.csrio.map(_.isPerfCnt)).map(_.getOrElse(false.B)).reduce(_ || _)
   io.out.bits.debugInfo := Mux1H(fuOutValidOH, fuOutBitsVec.map(_.perfDebugInfo))
+
+  // tmu memory io connection
+  if(exuParams.hasTmuFu) {
+    require(funcUnits.filter(_.isInstanceOf[Tmu]).size == 1, "Tmu is not found in funcUnits")
+    val tmu = funcUnits.filter(_.isInstanceOf[Tmu]).head.asInstanceOf[Tmu]
+    io.tlb.get <> tmu.io.tlb
+    io.node.get := tmu.io.node
+  }
+
 }
 
 class DispatcherIO[T <: Data](private val gen: T, n: Int) extends Bundle {
