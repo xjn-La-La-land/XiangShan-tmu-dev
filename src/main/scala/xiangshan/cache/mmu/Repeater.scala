@@ -363,11 +363,17 @@ class PTWNewFilter(Width: Int, Size: Int, FenceDelay: Int)(implicit p: Parameter
     prefetch_entry.io
   })
 
-  val filter = load_filter ++ store_filter ++ prefetch_filter
+  val tmu_filter = VecInit(Seq.fill(1) {
+    val tmu_entry = Module(new PTWFilterEntry(Width = 1, Size = tmufiltersize))
+    tmu_entry.io
+  })
+
+  val filter = load_filter ++ store_filter ++ prefetch_filter ++ tmu_filter
 
   load_filter.map(_.tlb.req := io.tlb.req.take(LdExuCnt + 1))
   store_filter.map(_.tlb.req := io.tlb.req.drop(LdExuCnt + 1).take(StaCnt))
-  prefetch_filter.map(_.tlb.req := io.tlb.req.drop(LdExuCnt + 1 + StaCnt))
+  prefetch_filter.map(_.tlb.req := io.tlb.req.drop(LdExuCnt + 1 + StaCnt)).take(2)
+  tmu_filter.map(_.tlb.req := io.tlb.req.drop(LdExuCnt + 1 + StaCnt + 2))
 
   val flush = DelayN(io.sfence.valid || io.csr.satp.changed || (io.csr.priv.virt && io.csr.vsatp.changed), FenceDelay)
   val ptwResp = RegEnable(io.ptw.resp.bits, io.ptw.resp.fire)
@@ -397,9 +403,11 @@ class PTWNewFilter(Width: Int, Size: Int, FenceDelay: Int)(implicit p: Parameter
   io.tlb.resp.bits.vector(0) := load_filter(0).refill
   io.tlb.resp.bits.vector(LdExuCnt + 1) := store_filter(0).refill
   io.tlb.resp.bits.vector(LdExuCnt + 1 + StaCnt) := prefetch_filter(0).refill
+  io.tlb.resp.bits.vector(LdExuCnt + 1 + StaCnt + 2) := tmu_filter(0).refill
   io.tlb.resp.bits.getGpa(0) := load_filter(0).getGpa
   io.tlb.resp.bits.getGpa(LdExuCnt + 1) := store_filter(0).getGpa
   io.tlb.resp.bits.getGpa(LdExuCnt + 1 + StaCnt) := prefetch_filter(0).getGpa
+  io.tlb.resp.bits.getGpa(LdExuCnt + 1 + StaCnt + 2) := tmu_filter(0).getGpa
 
   val hintIO = io.hint.getOrElse(new TlbHintIO)
   val load_hintIO = load_filter(0).hint.getOrElse(new TlbHintIO)
@@ -420,6 +428,10 @@ class PTWNewFilter(Width: Int, Size: Int, FenceDelay: Int)(implicit p: Parameter
   when (prefetch_filter(0).refill) {
     io.tlb.resp.bits.vector(LdExuCnt + 1 + StaCnt) := true.B
     io.tlb.resp.bits.data.memidx := 0.U.asTypeOf(new MemBlockidxBundle)
+  }
+  when (tmu_filter(0).refill) {
+    io.tlb.resp.bits.vector(LdExuCnt + 1 + StaCnt + 2) := true.B
+    io.tlb.resp.bits.data.memidx := tmu_filter(0).memidx
   }
 
   val ptw_arb = Module(new RRArbiterInit(new PtwReq, 3))
