@@ -14,6 +14,7 @@ import xiangshan.backend.fu.vector.Bundles.Vxsat
 import xiangshan.ExceptionNO.illegalInstr
 import xiangshan.backend.fu.vector.Bundles.VType
 import xiangshan.backend.fu.wrapper.{CSRInput, CSRToDecode}
+import xiangshan.cache.mmu.TlbRequestIO
 
 class FuncUnitCtrlInput(cfg: FuConfig)(implicit p: Parameters) extends XSBundle {
   val fuOpType    = FuOpType()
@@ -85,7 +86,7 @@ class FuncUnitOutput(cfg: FuConfig)(implicit p: Parameters) extends XSBundle {
   val perfDebugInfo = new PerfDebugInfo()
 }
 
-class FuncUnitIO(cfg: FuConfig)(implicit p: Parameters) extends XSBundle {
+class FuncUnitIO(cfg: FuConfig)(implicit p: Parameters) extends XSBundle with TmuParams {
   val flush = Flipped(ValidIO(new Redirect))
   val in = Flipped(DecoupledIO(new FuncUnitInput(cfg)))
   val out = DecoupledIO(new FuncUnitOutput(cfg))
@@ -99,6 +100,9 @@ class FuncUnitIO(cfg: FuConfig)(implicit p: Parameters) extends XSBundle {
   val vlIsZero = OptionWrapper(cfg.writeVlRf, Output(Bool()))
   val vlIsVlmax = OptionWrapper(cfg.writeVlRf, Output(Bool()))
   val instrAddrTransType = Option.when(cfg.isJmp || cfg.isBrh)(Input(new AddrTransType))
+
+  val tmuTlb    = OptionWrapper(cfg.isTmu, new TlbRequestIO())
+  val tmuMemBus = OptionWrapper(cfg.isTmu, new TmuMemBus)
 }
 
 abstract class FuncUnit(val cfg: FuConfig)(implicit p: Parameters) extends XSModule with HasCriticalErrors {

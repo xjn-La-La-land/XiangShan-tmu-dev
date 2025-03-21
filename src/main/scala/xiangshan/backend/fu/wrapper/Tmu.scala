@@ -9,18 +9,11 @@ import xiangshan.cache.mmu.TlbRequestIO
 import freechips.rocketchip.tilelink._
 import freechips.rocketchip.diplomacy.LazyModule
 
-// add memory io
-class TmuFuncUnitIO(cfg: FuConfig)(implicit p: Parameters) extends FuncUnitIO(cfg) with TmuParams {
-  val tlb  = new TlbRequestIO()
-  val memBus = new TmuMemBus
-}
-
 class Tmu (cfg: FuConfig)(implicit p: Parameters) extends FuncUnit(cfg) {
-  override val io: TmuFuncUnitIO = IO(new TmuFuncUnitIO(cfg))
 
   private val tmu = Module(new TmuModule)
-  io.tlb    <> tmu.io.tlb
-  io.memBus <> tmu.io.memBus
+  io.tmuTlb.get    <> tmu.io.tlb
+  io.tmuMemBus.get <> tmu.io.memBus
 
   private val src    = io.in.bits.data.src.take(2) // 2 src
   private val imm    = io.in.bits.data.imm(31, 0)

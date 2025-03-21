@@ -178,6 +178,8 @@ case class FuConfig (
 
   def isFence: Boolean = fuType == FuType.fence
 
+  def isTmu: Boolean = fuType == FuType.tmu
+
   def isVecArith: Boolean = fuType == FuType.vialuF || fuType == FuType.vimac ||
                             fuType == FuType.vppu || fuType == FuType.vipu ||
                             fuType == FuType.vfalu || fuType == FuType.vfma ||
