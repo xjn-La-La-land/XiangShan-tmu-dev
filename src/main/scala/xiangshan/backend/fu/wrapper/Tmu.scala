@@ -16,7 +16,7 @@ class TmuFuncUnitIO(cfg: FuConfig)(implicit p: Parameters) extends FuncUnitIO(cf
 }
 
 class Tmu (cfg: FuConfig)(implicit p: Parameters) extends FuncUnit(cfg) {
-  override val io: TmuFuncUnitIO = new TmuFuncUnitIO(cfg)
+  override val io: TmuFuncUnitIO = IO(new TmuFuncUnitIO(cfg))
 
   private val tmu = Module(new TmuModule)
   io.tlb    <> tmu.io.tlb
