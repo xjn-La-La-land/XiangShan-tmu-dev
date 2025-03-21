@@ -264,7 +264,7 @@ class TmuModule (implicit p: Parameters) extends XSModule with TmuParams {
       if(r == numTrows - 1) { // pump tileB into the last row
         tileB_buf(s1_tileB_buf_ptr)(r) := tiles_rdatas(s1_regs.tmmB)
       }else {
-        tileB_buf(s1_tileB_buf_ptr)(r) := tileB_buf(s1_tileB_buf_ptr)(r-1)
+        tileB_buf(s1_tileB_buf_ptr)(r) := tileB_buf(s1_tileB_buf_ptr)(r+1)
       }
     }
   }
@@ -356,7 +356,7 @@ class TmuModule (implicit p: Parameters) extends XSModule with TmuParams {
       if (r == 0) {
         tileC_buf(r) := tiles_rdatas(s2_regs.tmmC)
       }else {
-        tileC_buf(r) := VecInit((0 until numTcolsw).map(c => DPAMatrix(r)(c).out)).asUInt
+        tileC_buf(r) := VecInit((0 until numTcolsw).map(c => DPAMatrix(r-1)(c).out)).asUInt // move the temp results in (r-1)_th row to r_th row
       }
     }
   }
