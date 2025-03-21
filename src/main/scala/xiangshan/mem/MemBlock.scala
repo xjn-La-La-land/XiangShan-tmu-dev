@@ -91,7 +91,7 @@ class ooo_to_mem(implicit p: Parameters) extends MemBlockBundle {
   val loadFastImm = Vec(LdExuCnt, Input(UInt(12.W)))
   val sfence = Input(new SfenceBundle)
   val tlbCsr = Input(new TlbCsrBundle)
-  val tmuTlb = Input(new TlbRequestIO()) // for tmu 
+  val tmuTlb = Flipped(new TlbRequestIO()) // for tmu 
   val lsqio = new Bundle {
     val lcommit = Input(UInt(log2Up(CommitWidth + 1).W))
     val scommit = Input(UInt(log2Up(CommitWidth + 1).W))
