@@ -447,6 +447,7 @@ class TmuLSQueueToTiles(implicit val p: Parameters) extends Bundle with TmuParam
 
 // TMU laod/store queue
 class TmuLoadStoreQueue() (implicit p: Parameters) extends LazyModule with TmuParams {
+  override def shouldBeInlined: Boolean = false
   val clientNode = TLClientNode(Seq(clientParameters))
   lazy val module = new TmuLoadStoreQueueImp(this)
 }
