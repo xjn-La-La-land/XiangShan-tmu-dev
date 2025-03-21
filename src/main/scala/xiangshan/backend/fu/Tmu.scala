@@ -137,7 +137,14 @@ class TileReg (implicit val p: Parameters) extends Module with TmuParams {
 
 // HINT: Tile Matrix Unit
 // Tile Matrix Unit is a special functional unit that is used to accelerate matrix operations.
-class TmuDataModule (implicit p: Parameters) extends XSModule with TmuParams {
+class TmuModule() (implicit p: Parameters) extends LazyModule with TmuParams {
+  override def shouldBeInlined: Boolean = false
+  val clientNode = TLClientNode(Seq(clientParameters))
+  lazy val module = new TmuModuleImp(this)
+}
+
+
+class TmuModuleImp (outer: TmuModule)(implicit p: Parameters) extends LazyModuleImp(outer) with TmuParams {
   val io = IO(new Bundle() {
     // Exu interface
     val in  = Flipped(Decoupled(new TmuDataInput))
@@ -147,7 +154,6 @@ class TmuDataModule (implicit p: Parameters) extends XSModule with TmuParams {
     // Mem interface
     val tlb  = new TlbRequestIO()
     // val pmp  = Flipped(new PMPRespBundle()) // arrive same to tlb now
-    val node = TLClientNode(Seq(clientParameters))
   })
 
   ///////////////////////////////////////////////
@@ -178,9 +184,10 @@ class TmuDataModule (implicit p: Parameters) extends XSModule with TmuParams {
   ))
 
   // TMU Load/Store Queue
-  val lsQueue = Module(new TmuLoadStoreQueue).io
-  lsQueue.tlb  <> io.tlb
-  io.node := lsQueue.node
+  val lsQueue = LazyModule(new TmuLoadStoreQueue)
+  val lsqIO   = lsQueue.module.io
+  lsqIO.tlb  <> io.tlb
+  outer.clientNode := lsQueue.clientNode
 
 
   //////////////////////////////////////
@@ -213,7 +220,7 @@ class TmuDataModule (implicit p: Parameters) extends XSModule with TmuParams {
     s1_row_walk_ptr.reset()
   }.elsewhen(s1_regs.valid && s1_regs.isTDP && !s1_stall) {
     s1_row_walk_ptr.update()
-  }.elsewhen(s1_regs.valid && (s1_regs.isTileLoad || s1_regs.isTileStore) && lsQueue.enq.fire){
+  }.elsewhen(s1_regs.valid && (s1_regs.isTileLoad || s1_regs.isTileStore) && lsqIO.enq.fire){
     s1_row_walk_ptr.update()
   }
 
@@ -234,18 +241,18 @@ class TmuDataModule (implicit p: Parameters) extends XSModule with TmuParams {
   }
 
   // add load/store ctrl info into lsQueue
-  lsQueue.enq.valid := s1_regs.valid && (s1_regs.isTileLoad || s1_regs.isTileStore)
-  lsQueue.enq.bits        := DontCare
-  lsQueue.enq.bits.tile   := s1_regs.tmmC
-  lsQueue.enq.bits.row    := s1_row_walk_ptr.value
-  lsQueue.enq.bits.mem_op := s1_regs.mem_op
-  lsQueue.enq.bits.vaddr  := s1_regs.row_vaddr.get
+  lsqIO.enq.valid := s1_regs.valid && (s1_regs.isTileLoad || s1_regs.isTileStore)
+  lsqIO.enq.bits        := DontCare
+  lsqIO.enq.bits.tile   := s1_regs.tmmC
+  lsqIO.enq.bits.row    := s1_row_walk_ptr.value
+  lsqIO.enq.bits.mem_op := s1_regs.mem_op
+  lsqIO.enq.bits.vaddr  := s1_regs.row_vaddr.get
 
-  when(lsQueue.enq.fire) {
+  when(lsqIO.enq.fire) {
     s1_regs.updateRowVaddr()
   }
 
-  s1_lsq_done := lsQueue.enq.fire && s1_row_walk_ptr.ready_go
+  s1_lsq_done := lsqIO.enq.fire && s1_row_walk_ptr.ready_go
   s1_out_valid := s1_regs.isTDP && s1_regs.valid && s1_row_walk_ptr.overflow
   io.in.ready  := s1_s2_fire || s1_lsq_done || !s1_regs.valid
 
@@ -327,11 +334,11 @@ class TmuDataModule (implicit p: Parameters) extends XSModule with TmuParams {
 
   s3_in_ready  := io.out.fire || !s3_regs.valid
 
-  val tileLS_ready_go = lsQueue.deq.valid && lsQueue.deq.bits.row === (numTrows-1).U
-  lsQueue.deq.ready := Mux(tileLS_ready_go, io.out.ready, true.B)
+  val tileLS_ready_go = lsqIO.deq.valid && lsqIO.deq.bits.row === (numTrows-1).U
+  lsqIO.deq.ready := Mux(tileLS_ready_go, io.out.ready, true.B)
 
   io.out.valid       := Mux(tileLS_ready_go, true.B, s3_regs.valid && s3_row_walk_ptr.ready_go)
-  io.out.bits.robIdx := Mux(tileLS_ready_go, lsQueue.deq.bits.robIdx, s3_regs.robIdx)
+  io.out.bits.robIdx := Mux(tileLS_ready_go, lsqIO.deq.bits.robIdx, s3_regs.robIdx)
 
 
   /////////////////////////////////
@@ -340,19 +347,19 @@ class TmuDataModule (implicit p: Parameters) extends XSModule with TmuParams {
   val s1_ren = VecInit((0 until numTmm).map(i => s1_regs.valid && s1_regs.isTDP && (s1_regs.tmmB === i.U)))
   val s2_ren = VecInit((0 until numTmm).map(i => s2_regs.valid && s2_regs.isTDP && (s2_regs.tmmA === i.U || s2_regs.tmmC === i.U)))
   val s3_wen = VecInit((0 until numTmm).map(i => s3_regs.valid && s3_regs.isTDP && (s3_regs.tmmC === i.U)))
-  val lsq_ren = VecInit((0 until numTmm).map(i => lsQueue.tileData.ren && (lsQueue.tileData.rtile === i.U)))
-  val lsq_wen = VecInit((0 until numTmm).map(i => lsQueue.tileData.wen && (lsQueue.tileData.wtile === i.U)))
+  val lsq_ren = VecInit((0 until numTmm).map(i => lsqIO.tileData.ren && (lsqIO.tileData.rtile === i.U)))
+  val lsq_wen = VecInit((0 until numTmm).map(i => lsqIO.tileData.wen && (lsqIO.tileData.wtile === i.U)))
 
 
   for (i <- 0 until numTmm) {
     tiles_rrows(i)  := PriorityMux(Seq(
-      lsq_ren(i) -> lsQueue.tileData.rrow,
+      lsq_ren(i) -> lsqIO.tileData.rrow,
       s2_ren(i)  -> s2_row_walk_ptr.value,
       s1_ren(i)  -> s1_row_walk_ptr.value
     ))
-    tiles_wrows(i)  := Mux(lsq_wen(i), lsQueue.tileData.wrow, s3_row_walk_ptr.value)
+    tiles_wrows(i)  := Mux(lsq_wen(i), lsqIO.tileData.wrow, s3_row_walk_ptr.value)
     tiles_wens(i)   := s3_wen(i) || lsq_wen(i)
-    tiles_wdatas(i) := Mux(lsq_wen(i), lsQueue.tileData.wdata, tileC_buf.last) // data pop from the last line
+    tiles_wdatas(i) := Mux(lsq_wen(i), lsqIO.tileData.wdata, tileC_buf.last) // data pop from the last line
   }
 
   s1_stall := s1_ren.zip(s2_ren).map(r => r._1 && r._2).reduce(_ || _) || // s1 and s2 read the same tile
@@ -439,7 +446,13 @@ class TmuLSQueueToTiles(implicit val p: Parameters) extends Bundle with TmuParam
 
 
 // TMU laod/store queue
-class TmuLoadStoreQueue (implicit p: Parameters) extends XSModule with TmuParams with HasCircularQueuePtrHelper {
+class TmuLoadStoreQueue() (implicit p: Parameters) extends LazyModule with TmuParams {
+  val clientNode = TLClientNode(Seq(clientParameters))
+  lazy val module = new TmuLoadStoreQueueImp(this)
+}
+
+class TmuLoadStoreQueueImp (outer: TmuLoadStoreQueue)(implicit p: Parameters) extends LazyModuleImp(outer) 
+with TmuParams with HasCircularQueuePtrHelper {
   val io = IO(new Bundle {
     val enq      = Flipped(Decoupled(new TmuLSQueueEntry))
     val deq      = Decoupled(new TmuLSQueueEntry)
@@ -447,7 +460,6 @@ class TmuLoadStoreQueue (implicit p: Parameters) extends XSModule with TmuParams
 
     val tlb  = new TlbRequestIO()
     // val pmp  = Flipped(new PMPRespBundle()) // arrive same to tlb now
-    val node = TLClientNode(Seq(clientParameters))
   })
 
   class TmuLSQueuePtr extends CircularQueuePtr[TmuLSQueuePtr](p => tileLSQueue_sz) {}
@@ -522,7 +534,7 @@ class TmuLoadStoreQueue (implicit p: Parameters) extends XSModule with TmuParams
   }
 
   // TileLink request
-  val (bus, edge) = io.node.out.head
+  val (bus, edge) = outer.clientNode.out.head
 
   val tlReq_entry = ToTmuLSQueueEntry(tlReq_ptr)
   io.tileData.rtile := tlReq_entry.tile
