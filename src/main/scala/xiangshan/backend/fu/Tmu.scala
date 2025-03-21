@@ -82,9 +82,11 @@ trait TmuParams extends HasXSParameter {
     )
     def mem_op : UInt = Cat(isTileLoad, isTileStore)
 
-    val row_vaddr = if(needVaddr) Some(Reg(UInt(VAddrBits.W))) else None
-    when(in_fire) {
-      row_vaddr.get := in_bits.src(0) + ZeroExt(Cat(in_bits.imm(31, 3), 0.U(3.W)), VAddrBits)
+    val row_vaddr = Option.when(needVaddr)(Reg(UInt(VAddrBits.W)))
+    if (needVaddr) {
+      when(in_fire) {
+        row_vaddr.get := in_bits.src(0) + ZeroExt(Cat(in_bits.imm(31, 3), 0.U(3.W)), VAddrBits)
+      }
     }
     def updateRowVaddr(): Unit = {
       row_vaddr.get := row_vaddr.get + stride
