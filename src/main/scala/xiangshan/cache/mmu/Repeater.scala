@@ -363,6 +363,7 @@ class PTWNewFilter(Width: Int, Size: Int, FenceDelay: Int)(implicit p: Parameter
     prefetch_entry.io
   })
 
+  // add tmu_dtlb filter
   val tmu_filter = VecInit(Seq.fill(1) {
     val tmu_entry = Module(new PTWFilterEntry(Width = 1, Size = tmufiltersize))
     tmu_entry.io
@@ -434,8 +435,8 @@ class PTWNewFilter(Width: Int, Size: Int, FenceDelay: Int)(implicit p: Parameter
     io.tlb.resp.bits.data.memidx := tmu_filter(0).memidx
   }
 
-  val ptw_arb = Module(new RRArbiterInit(new PtwReq, 3))
-  for (i <- 0 until 3) {
+  val ptw_arb = Module(new RRArbiterInit(new PtwReq, 4))
+  for (i <- 0 until 4) {
     ptw_arb.io.in(i).valid := filter(i).ptw.req(0).valid
     ptw_arb.io.in(i).bits.vpn := filter(i).ptw.req(0).bits.vpn
     ptw_arb.io.in(i).bits.s2xlate := filter(i).ptw.req(0).bits.s2xlate

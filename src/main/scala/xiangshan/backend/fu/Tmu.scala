@@ -389,6 +389,8 @@ class TmuModule (implicit p: Parameters) extends XSModule with TmuParams {
     tiles(i).io.wdata := Mux(lsq_wen(i), lsqIO.tileData.wdata, tileC_buf.last) // data pop from the last line
   }
 
+  lsqIO.tileData.rdata := tiles_rdatas(lsqIO.tileData.rtile)
+
   s1_stall := s1_ren.zip(s2_ren).map(r => r._1 && r._2).reduce(_ || _) || // s1 and s2 read the same tile
               s1_ren.zip(s3_wen).map(r => r._1 && r._2).reduce(_ || _)    // s1 read and s3 write the same tile
   s2_stall := s2_ren.zip(s3_wen).map(r => r._1 && r._2).reduce(_ || _)    // s2 read and s3 write the same tile
