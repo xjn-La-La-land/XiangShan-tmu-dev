@@ -522,8 +522,7 @@ class TmuLoadStoreQueue (implicit p: Parameters) extends XSModule with TmuParams
   }
 
   // TileLink request
-  val edge = io.node.edges.out(0)
-  val (tl_out, _) = io.node.out(0)
+  val (bus, edge) = io.node.out.head
 
   val tlReq_entry = ToTmuLSQueueEntry(tlReq_ptr)
   io.tileData.rtile := tlReq_entry.tile
@@ -535,22 +534,22 @@ class TmuLoadStoreQueue (implicit p: Parameters) extends XSModule with TmuParams
     ctrl.tile === tlReq_entry.tile && ctrl.row === tlReq_entry.row // 未写回的 load 请求
   }.reduce(_ || _)
   io.tileData.ren   := tlReq_entry.valid && tlReq_entry.isStore && !l2sCheck && tlReq_entry.paddr_v // 已经完成 vaddr -> paddr 转换
-  val tileRdata_valid = ValidHold(io.tileData.ren, tl_out.a.fire)
+  val tileRdata_valid = ValidHold(io.tileData.ren, bus.a.fire)
 
   val tileReq_cnt = TLTransCnt()
-  when(tl_out.a.fire) {
+  when(bus.a.fire) {
     tileReq_cnt.update()
   }
   val tileRdata_vec = VecInit((0 until numBurst).map(i => io.tileData.rdata(l1BusDataWidth*(i+1)-1, l1BusDataWidth*i)))
   
-  tl_out.a.valid := tileRdata_valid || tlReq_entry.valid && tlReq_entry.isLoad && tlReq_entry.paddr_v
-  tl_out.a.bits  := Mux1H(Seq(
+  bus.a.valid := tileRdata_valid || tlReq_entry.valid && tlReq_entry.isLoad && tlReq_entry.paddr_v
+  bus.a.bits  := Mux1H(Seq(
     tlReq_entry.isLoad  -> edge.Get(fromSource = tlReq_ptr.value, toAddress = tlReq_entry.paddr, lgSize = log2Ceil(numTcolsb).U)._2,
     tlReq_entry.isStore -> edge.Put(fromSource = tlReq_ptr.value, toAddress = tlReq_entry.paddr, lgSize = log2Ceil(numTcolsb).U, data = tileRdata_vec(tileReq_cnt.value))._2
   ))
 
-  val tlReqDone = tl_out.a.fire && tlReq_entry.isLoad ||
-                  tl_out.a.fire && tlReq_entry.isStore && tileReq_cnt.last
+  val tlReqDone = bus.a.fire && tlReq_entry.isLoad ||
+                  bus.a.fire && tlReq_entry.isStore && tileReq_cnt.last
 
   // tlReq_ptr 指针的更新
   when(tlReqDone) {
@@ -558,27 +557,27 @@ class TmuLoadStoreQueue (implicit p: Parameters) extends XSModule with TmuParams
   }
 
   // TileLink response
-  tl_out.d.ready := true.B // LSQueue always ready for response
-  val tlResp_entry = (tl_out.d.bits.source)
+  bus.d.ready := true.B // LSQueue always ready for response
+  val tlResp_entry = (bus.d.bits.source)
   val tlResp_cnt = TLTransCnt()
   val tileWdata_buf = Reg(Vec(numBurst-1, UInt(l1BusDataWidth.W)))
-  when(tl_out.d.fire && tl_out.d.bits.opcode === TLMessages.AccessAckData) { // response for Get
+  when(bus.d.fire && bus.d.bits.opcode === TLMessages.AccessAckData) { // response for Get
     tlResp_cnt.update()
     when(!tlResp_cnt.last) {
-      tileWdata_buf(tlResp_cnt.value) := tl_out.d.bits.data
+      tileWdata_buf(tlResp_cnt.value) := bus.d.bits.data
     }
   }
-  val tileWdata = Cat(tl_out.d.bits.data, tileWdata_buf.asUInt)
-  val tlRespDone = tl_out.d.fire && tl_out.d.bits.opcode === TLMessages.AccessAckData && tlResp_cnt.last || 
-                   tl_out.d.fire && tl_out.d.bits.opcode === TLMessages.AccessAck
+  val tileWdata = Cat(bus.d.bits.data, tileWdata_buf.asUInt)
+  val tlRespDone = bus.d.fire && bus.d.bits.opcode === TLMessages.AccessAckData && tlResp_cnt.last || 
+                   bus.d.fire && bus.d.bits.opcode === TLMessages.AccessAck
 
-  io.tileData.wtile := ctrl_queue(tl_out.d.bits.source).tile
-  io.tileData.wrow  := ctrl_queue(tl_out.d.bits.source).row
+  io.tileData.wtile := ctrl_queue(bus.d.bits.source).tile
+  io.tileData.wrow  := ctrl_queue(bus.d.bits.source).row
   io.tileData.wdata := tileWdata
-  io.tileData.wen   := tl_out.d.fire && tl_out.d.bits.opcode === TLMessages.AccessAckData && tlResp_cnt.last // write back to tmm when the last beat come
+  io.tileData.wen   := bus.d.fire && bus.d.bits.opcode === TLMessages.AccessAckData && tlResp_cnt.last // write back to tmm when the last beat come
 
   // tlResp_ptr 指针的更新
-  when(tlState_queue(tlResp_ptr.value) === TLState.s_done || tlRespDone && tlResp_ptr.value === tl_out.d.bits.source) {
+  when(tlState_queue(tlResp_ptr.value) === TLState.s_done || tlRespDone && tlResp_ptr.value === bus.d.bits.source) {
     tlResp_ptr := tlResp_ptr + 1.U
   }
 
@@ -607,7 +606,7 @@ class TmuLoadStoreQueue (implicit p: Parameters) extends XSModule with TmuParams
       tlState_queue(i) := TLState.s_wait_a
     }.elsewhen(tlReqDone && tlReq_ptr.value === i.U) {
       tlState_queue(i) := TLState.s_wait_d
-    }.elsewhen(tlRespDone && tl_out.d.bits.source === i.U) {
+    }.elsewhen(tlRespDone && bus.d.bits.source === i.U) {
       tlState_queue(i) := TLState.s_done
     }.elsewhen(io.deq.fire && out_ptr.value === i.U) {
       tlState_queue(i) := TLState.s_idle
