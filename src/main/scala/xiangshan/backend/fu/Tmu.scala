@@ -194,11 +194,7 @@ class TmuModule (implicit p: Parameters) extends XSModule with TmuParams {
 
   // tile register file
   val tiles = Seq.fill(numTmm)(Module(new TileReg))
-  val tiles_rrows  = VecInit(tiles.map(_.io.rrow))
   val tiles_rdatas = VecInit(tiles.map(_.io.rdata))
-  val tiles_wrows  = VecInit(tiles.map(_.io.wrow))
-  val tiles_wens   = VecInit(tiles.map(_.io.wen))
-  val tiles_wdatas = VecInit(tiles.map(_.io.wdata))
 
   // registers for tdp operation
   val tileB_buf = Reg(Vec(numTileBbuf, Vec(numTrows, UInt(row_data_w.W)))) // multiple buffer for B
@@ -383,14 +379,14 @@ class TmuModule (implicit p: Parameters) extends XSModule with TmuParams {
 
 
   for (i <- 0 until numTmm) {
-    tiles_rrows(i)  := PriorityMux(Seq(
+    tiles(i).io.rrow  := PriorityMux(Seq(
       lsq_ren(i) -> lsqIO.tileData.rrow,
       s2_ren(i)  -> s2_row_walk_ptr.value,
       s1_ren(i)  -> s1_row_walk_ptr.value
     ))
-    tiles_wrows(i)  := Mux(lsq_wen(i), lsqIO.tileData.wrow, s3_row_walk_ptr.value)
-    tiles_wens(i)   := s3_wen(i) || lsq_wen(i)
-    tiles_wdatas(i) := Mux(lsq_wen(i), lsqIO.tileData.wdata, tileC_buf.last) // data pop from the last line
+    tiles(i).io.wrow  := Mux(lsq_wen(i), lsqIO.tileData.wrow, s3_row_walk_ptr.value)
+    tiles(i).io.wen   := s3_wen(i) || lsq_wen(i)
+    tiles(i).io.wdata := Mux(lsq_wen(i), lsqIO.tileData.wdata, tileC_buf.last) // data pop from the last line
   }
 
   s1_stall := s1_ren.zip(s2_ren).map(r => r._1 && r._2).reduce(_ || _) || // s1 and s2 read the same tile
@@ -549,7 +545,9 @@ with TmuParams with HasCircularQueuePtrHelper {
   io.tlb.req.bits.memidx.is_ld  := tlb_req_entry.isLoad
   io.tlb.req.bits.memidx.is_st  := tlb_req_entry.isStore
   io.tlb.req.bits.memidx.idx    := 0.U
+  io.tlb.req.bits.isPrefetch    := false.B
   io.tlb.req.bits.no_translate  := false.B
+  io.tlb.req.bits.pmp_addr      := RegEnable(io.tlb.resp.bits.paddr, io.tlb.resp.fire) // pmp check not activated in tmu
 
   io.tlb.req.bits.debug         := DontCare
 
