@@ -372,7 +372,7 @@ class PTWNewFilter(Width: Int, Size: Int, FenceDelay: Int)(implicit p: Parameter
 
   load_filter.map(_.tlb.req := io.tlb.req.take(LdExuCnt + 1))
   store_filter.map(_.tlb.req := io.tlb.req.drop(LdExuCnt + 1).take(StaCnt))
-  prefetch_filter.map(_.tlb.req := io.tlb.req.drop(LdExuCnt + 1 + StaCnt)).take(2)
+  prefetch_filter.map(_.tlb.req := io.tlb.req.drop(LdExuCnt + 1 + StaCnt).take(2))
   tmu_filter.map(_.tlb.req := io.tlb.req.drop(LdExuCnt + 1 + StaCnt + 2))
 
   val flush = DelayN(io.sfence.valid || io.csr.satp.changed || (io.csr.priv.virt && io.csr.vsatp.changed), FenceDelay)
