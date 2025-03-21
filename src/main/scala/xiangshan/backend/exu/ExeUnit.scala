@@ -416,8 +416,8 @@ class ExeUnitImp(
   if(exuParams.hasTmuFu) {
     require(funcUnits.filter(_.isInstanceOf[Tmu]).size == 1, "Tmu is not found in funcUnits")
     val tmu = funcUnits.filter(_.isInstanceOf[Tmu]).head.asInstanceOf[Tmu]
-    io.tmuTlb.get <> tmu.io.tlb
-    io.tmuMemBus.get <> tmu.io.memBus
+    io.tmuTlb.get <> tmu.io.tmuTlb.get
+    io.tmuMemBus.get <> tmu.io.tmuMemBus.get
   }
 
 }
