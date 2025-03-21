@@ -547,7 +547,7 @@ with TmuParams with HasCircularQueuePtrHelper {
   io.tlb.req.bits.memidx.idx    := 0.U
   io.tlb.req.bits.isPrefetch    := false.B
   io.tlb.req.bits.no_translate  := false.B
-  io.tlb.req.bits.pmp_addr      := RegEnable(io.tlb.resp.bits.paddr, io.tlb.resp.fire) // pmp check not activated in tmu
+  io.tlb.req.bits.pmp_addr      := RegEnable(io.tlb.resp.bits.paddr(0), io.tlb.resp.fire) // pmp check not activated in tmu
 
   io.tlb.req.bits.debug         := DontCare
 
