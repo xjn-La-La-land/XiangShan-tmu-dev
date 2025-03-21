@@ -54,7 +54,7 @@ import scala.collection.mutable
 
 import xiangshan.cache.mmu.TlbRequestIO
 import freechips.rocketchip.tilelink.TLClientNode
-import xiangshan.backend.fu.TmuParams
+import xiangshan.backend.fu.{TmuParams,TmuMemBus}
 
 class Backend(val params: BackendParams)(implicit p: Parameters) extends LazyModule
   with HasXSParameter {
@@ -191,7 +191,7 @@ class BackendInlined(val params: BackendParams)(implicit p: Parameters) extends 
   val vfExuBlock = params.vfSchdParams.map(x => LazyModule(new ExuBlock(x)))
   val wbFuBusyTable = LazyModule(new WbFuBusyTable(params))
 
-  val tmu_node = TLClientNode(Seq(clientParameters))
+  val tmu_node = TLClientNode(Seq(tmuClientParameters))
 
   lazy val module = new BackendInlinedImp(this)
 }
@@ -627,9 +627,8 @@ class BackendInlinedImp(override val wrapper: BackendInlined)(implicit p: Parame
   io.fenceio <> fenceio
 
   // tmu memory io connection
-  private val tmu2mem = intExuBlock.io.tmu2mem.get
-  io.mem.tmuTlb.get <> tmu2mem.tlb
-  wrapper.tmu_node := tmu2mem.node
+  io.mem.tmuTlb.get <> intExuBlock.io.tmuTlb.get
+  intExuBlock.io.tmuMemBus.get.ConnectClientNode(wrapper.tmu_node)
 
   // to fpExuBlock
   fpExuBlock.io.flush := ctrlBlock.io.toExuBlock.flush

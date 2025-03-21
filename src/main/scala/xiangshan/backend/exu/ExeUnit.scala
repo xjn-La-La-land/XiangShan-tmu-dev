@@ -31,7 +31,7 @@ import xiangshan.backend.fu.vector.Bundles.{VType, Vxrm}
 import xiangshan.backend.fu.fpu.Bundles.Frm
 import xiangshan.backend.fu.wrapper.{CSRInput, CSRToDecode, Tmu}
 import xiangshan.cache.mmu.TlbRequestIO
-import xiangshan.backend.fu.TmuParams
+import xiangshan.backend.fu.{TmuParams,TmuMemBus}
 import freechips.rocketchip.tilelink.TLClientNode
 
 class ExeUnitIO(params: ExeUnitParams)(implicit p: Parameters) extends XSBundle with TmuParams {
@@ -49,11 +49,11 @@ class ExeUnitIO(params: ExeUnitParams)(implicit p: Parameters) extends XSBundle 
   val vlIsVlmax = Option.when(params.writeVConfig)(Output(Bool()))
   val instrAddrTransType = Option.when(params.hasJmpFu || params.hasBrhFu)(Input(new AddrTransType))
   // tmu memory io
-  val tlb = Option.when(params.hasTmuFu)(new TlbRequestIO())
-  val node = Option.when(params.hasTmuFu)(TLClientNode(Seq(clientParameters)))
+  val tmuTlb    = Option.when(params.hasTmuFu)(new TlbRequestIO())
+  val tmuMemBus = Option.when(params.hasTmuFu)(new TmuMemBus)
 }
 
-class ExeUnit(val exuParams: ExeUnitParams)(implicit p: Parameters) extends LazyModule {
+class ExeUnit(val exuParams: ExeUnitParams)(implicit p: Parameters) extends LazyModule with TmuParams {
   override def shouldBeInlined: Boolean = false
 
   lazy val module = new ExeUnitImp(this)(p, exuParams)
@@ -416,8 +416,8 @@ class ExeUnitImp(
   if(exuParams.hasTmuFu) {
     require(funcUnits.filter(_.isInstanceOf[Tmu]).size == 1, "Tmu is not found in funcUnits")
     val tmu = funcUnits.filter(_.isInstanceOf[Tmu]).head.asInstanceOf[Tmu]
-    io.tlb.get <> tmu.io.tlb
-    io.node.get := tmu.io.node
+    io.tmuTlb.get <> tmu.io.tlb
+    io.tmuMemBus.get <> tmu.io.memBus
   }
 
 }

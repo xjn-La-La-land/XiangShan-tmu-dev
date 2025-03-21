@@ -12,6 +12,7 @@ import xiangshan.backend.fu.PMPRespBundle
 import freechips.rocketchip.diplomacy.{IdRange, LazyModule, LazyModuleImp, TransferSizes}
 import freechips.rocketchip.tilelink._
 import xiangshan.backend.rob.RobPtr
+import java.lang.reflect.Parameter
 
 
 class TmuDataInput(implicit p: Parameters) extends XSBundle {
@@ -93,12 +94,14 @@ trait TmuParams extends HasXSParameter {
   val tileLSQueue_sz = 32
   val mem_op_typ     = 2  // {load, store}
   // TileLink clinet node params
-  val clientParameters = TLMasterPortParameters.v1(
+  val tmuClientParameters = TLMasterPortParameters.v1(
     clients = Seq(TLMasterParameters.v1(
       "tmu",
       sourceId = IdRange(0, tileLSQueue_sz) // [0, tileLSQueue_sz)
     )),
   )
+  val sourceIDWidth = log2Ceil(tileLSQueue_sz)
+
   val numBurst = row_data_w / l1BusDataWidth
   case class TLTransCnt() {
     private val cnt = RegInit(0.U(log2Ceil(numBurst).W))
@@ -134,17 +137,43 @@ class TileReg (implicit val p: Parameters) extends Module with TmuParams {
 }
 
 
+// Tmu memory access bundle
+class TmuMemBus (implicit p: Parameters) extends XSBundle with TmuParams {
+  val req = DecoupledIO(new Bundle {
+    val source = UInt(sourceIDWidth.W)
+    val paddr  = UInt(PAddrBits.W)
+    val wdata  = UInt(l1BusDataWidth.W)
+    val isWrite = Bool()
+  })
+  val resp = Flipped(DecoupledIO(new Bundle {
+    val source = UInt(sourceIDWidth.W)
+    val rdata  = UInt(l1BusDataWidth.W)
+    val isWrite = Bool()
+  }))
 
-// HINT: Tile Matrix Unit
-// Tile Matrix Unit is a special functional unit that is used to accelerate matrix operations.
-class TmuModule() (implicit p: Parameters) extends LazyModule with TmuParams {
-  override def shouldBeInlined: Boolean = false
-  val clientNode = TLClientNode(Seq(clientParameters))
-  lazy val module = new TmuModuleImp(this)
+
+  def ConnectClientNode(node: TLClientNode): Unit = {
+    val (bus, edge) = node.out.head
+    bus.a.valid := req.valid
+    req.ready   := bus.a.ready
+    bus.a.bits  := Mux(req.bits.isWrite, 
+      edge.Put(fromSource = req.bits.source, toAddress = req.bits.paddr, lgSize = log2Ceil(l1BusDataWidth/8).U, data = req.bits.wdata)._2,
+      edge.Get(fromSource = req.bits.source, toAddress = req.bits.paddr, lgSize = log2Ceil(l1BusDataWidth/8).U)._2
+    )
+
+    resp.valid  := bus.d.valid
+    bus.d.ready := resp.ready
+    resp.bits.source  := bus.d.bits.source
+    resp.bits.rdata   := bus.d.bits.data
+    resp.bits.isWrite := bus.d.bits.opcode === TLMessages.AccessAck
+  }
 }
 
 
-class TmuModuleImp (outer: TmuModule)(implicit p: Parameters) extends LazyModuleImp(outer) with TmuParams {
+
+// HINT: Tile Matrix Unit
+// Tile Matrix Unit is a special functional unit that is used to accelerate matrix operations.
+class TmuModule (implicit p: Parameters) extends XSModule with TmuParams {
   val io = IO(new Bundle() {
     // Exu interface
     val in  = Flipped(Decoupled(new TmuDataInput))
@@ -154,6 +183,7 @@ class TmuModuleImp (outer: TmuModule)(implicit p: Parameters) extends LazyModule
     // Mem interface
     val tlb  = new TlbRequestIO()
     // val pmp  = Flipped(new PMPRespBundle()) // arrive same to tlb now
+    val memBus = new TmuMemBus
   })
 
   ///////////////////////////////////////////////
@@ -184,10 +214,9 @@ class TmuModuleImp (outer: TmuModule)(implicit p: Parameters) extends LazyModule
   ))
 
   // TMU Load/Store Queue
-  val lsQueue = LazyModule(new TmuLoadStoreQueue)
-  val lsqIO   = lsQueue.module.io
+  private val lsqIO = Module(new TmuLoadStoreQueue).io
   lsqIO.tlb  <> io.tlb
-  outer.clientNode := lsQueue.clientNode
+  lsqIO.memBus <> io.memBus
 
 
   //////////////////////////////////////
@@ -446,13 +475,7 @@ class TmuLSQueueToTiles(implicit val p: Parameters) extends Bundle with TmuParam
 
 
 // TMU laod/store queue
-class TmuLoadStoreQueue() (implicit p: Parameters) extends LazyModule with TmuParams {
-  override def shouldBeInlined: Boolean = false
-  val clientNode = TLClientNode(Seq(clientParameters))
-  lazy val module = new TmuLoadStoreQueueImp(this)
-}
-
-class TmuLoadStoreQueueImp (outer: TmuLoadStoreQueue)(implicit p: Parameters) extends LazyModuleImp(outer) 
+class TmuLoadStoreQueue (implicit p: Parameters) extends XSModule
 with TmuParams with HasCircularQueuePtrHelper {
   val io = IO(new Bundle {
     val enq      = Flipped(Decoupled(new TmuLSQueueEntry))
@@ -461,6 +484,7 @@ with TmuParams with HasCircularQueuePtrHelper {
 
     val tlb  = new TlbRequestIO()
     // val pmp  = Flipped(new PMPRespBundle()) // arrive same to tlb now
+    val memBus = new TmuMemBus
   })
 
   class TmuLSQueuePtr extends CircularQueuePtr[TmuLSQueuePtr](p => tileLSQueue_sz) {}
@@ -535,8 +559,6 @@ with TmuParams with HasCircularQueuePtrHelper {
   }
 
   // TileLink request
-  val (bus, edge) = outer.clientNode.out.head
-
   val tlReq_entry = ToTmuLSQueueEntry(tlReq_ptr)
   io.tileData.rtile := tlReq_entry.tile
   io.tileData.rrow  := tlReq_entry.row
@@ -547,22 +569,22 @@ with TmuParams with HasCircularQueuePtrHelper {
     ctrl.tile === tlReq_entry.tile && ctrl.row === tlReq_entry.row // 未写回的 load 请求
   }.reduce(_ || _)
   io.tileData.ren   := tlReq_entry.valid && tlReq_entry.isStore && !l2sCheck && tlReq_entry.paddr_v // 已经完成 vaddr -> paddr 转换
-  val tileRdata_valid = ValidHold(io.tileData.ren, bus.a.fire)
+  val tileRdata_valid = ValidHold(io.tileData.ren, io.memBus.req.fire)
 
   val tileReq_cnt = TLTransCnt()
-  when(bus.a.fire) {
+  when(io.memBus.req.fire) {
     tileReq_cnt.update()
   }
   val tileRdata_vec = VecInit((0 until numBurst).map(i => io.tileData.rdata(l1BusDataWidth*(i+1)-1, l1BusDataWidth*i)))
   
-  bus.a.valid := tileRdata_valid || tlReq_entry.valid && tlReq_entry.isLoad && tlReq_entry.paddr_v
-  bus.a.bits  := Mux1H(Seq(
-    tlReq_entry.isLoad  -> edge.Get(fromSource = tlReq_ptr.value, toAddress = tlReq_entry.paddr, lgSize = log2Ceil(numTcolsb).U)._2,
-    tlReq_entry.isStore -> edge.Put(fromSource = tlReq_ptr.value, toAddress = tlReq_entry.paddr, lgSize = log2Ceil(numTcolsb).U, data = tileRdata_vec(tileReq_cnt.value))._2
-  ))
+  io.memBus.req.valid := tileRdata_valid || tlReq_entry.valid && tlReq_entry.isLoad && tlReq_entry.paddr_v
+  io.memBus.req.bits.source  := tlReq_ptr.value
+  io.memBus.req.bits.paddr   := tlReq_entry.paddr
+  io.memBus.req.bits.wdata   := tileRdata_vec(tileReq_cnt.value)
+  io.memBus.req.bits.isWrite := tlReq_entry.isStore
 
-  val tlReqDone = bus.a.fire && tlReq_entry.isLoad ||
-                  bus.a.fire && tlReq_entry.isStore && tileReq_cnt.last
+  val tlReqDone = io.memBus.req.fire && tlReq_entry.isLoad ||
+                  io.memBus.req.fire && tlReq_entry.isStore && tileReq_cnt.last
 
   // tlReq_ptr 指针的更新
   when(tlReqDone) {
@@ -570,27 +592,27 @@ with TmuParams with HasCircularQueuePtrHelper {
   }
 
   // TileLink response
-  bus.d.ready := true.B // LSQueue always ready for response
-  val tlResp_entry = (bus.d.bits.source)
+  io.memBus.resp.ready := true.B // LSQueue always ready for response
+  val tlResp_entry = (io.memBus.resp.bits.source)
   val tlResp_cnt = TLTransCnt()
   val tileWdata_buf = Reg(Vec(numBurst-1, UInt(l1BusDataWidth.W)))
-  when(bus.d.fire && bus.d.bits.opcode === TLMessages.AccessAckData) { // response for Get
+  when(io.memBus.resp.fire && !io.memBus.resp.bits.isWrite) { // response for Get
     tlResp_cnt.update()
     when(!tlResp_cnt.last) {
-      tileWdata_buf(tlResp_cnt.value) := bus.d.bits.data
+      tileWdata_buf(tlResp_cnt.value) := io.memBus.resp.bits.rdata
     }
   }
-  val tileWdata = Cat(bus.d.bits.data, tileWdata_buf.asUInt)
-  val tlRespDone = bus.d.fire && bus.d.bits.opcode === TLMessages.AccessAckData && tlResp_cnt.last || 
-                   bus.d.fire && bus.d.bits.opcode === TLMessages.AccessAck
+  val tileWdata = Cat(io.memBus.resp.bits.rdata, tileWdata_buf.asUInt)
+  val tlRespDone = io.memBus.resp.fire && !io.memBus.resp.bits.isWrite && tlResp_cnt.last || 
+                   io.memBus.resp.fire && io.memBus.resp.bits.isWrite
 
-  io.tileData.wtile := ctrl_queue(bus.d.bits.source).tile
-  io.tileData.wrow  := ctrl_queue(bus.d.bits.source).row
+  io.tileData.wtile := ctrl_queue(io.memBus.resp.bits.source).tile
+  io.tileData.wrow  := ctrl_queue(io.memBus.resp.bits.source).row
   io.tileData.wdata := tileWdata
-  io.tileData.wen   := bus.d.fire && bus.d.bits.opcode === TLMessages.AccessAckData && tlResp_cnt.last // write back to tmm when the last beat come
+  io.tileData.wen   := io.memBus.resp.fire && !io.memBus.resp.bits.isWrite && tlResp_cnt.last // write back to tmm when the last beat come
 
   // tlResp_ptr 指针的更新
-  when(tlState_queue(tlResp_ptr.value) === TLState.s_done || tlRespDone && tlResp_ptr.value === bus.d.bits.source) {
+  when(tlState_queue(tlResp_ptr.value) === TLState.s_done || tlRespDone && tlResp_ptr.value === io.memBus.resp.bits.source) {
     tlResp_ptr := tlResp_ptr + 1.U
   }
 
@@ -619,7 +641,7 @@ with TmuParams with HasCircularQueuePtrHelper {
       tlState_queue(i) := TLState.s_wait_a
     }.elsewhen(tlReqDone && tlReq_ptr.value === i.U) {
       tlState_queue(i) := TLState.s_wait_d
-    }.elsewhen(tlRespDone && bus.d.bits.source === i.U) {
+    }.elsewhen(tlRespDone && io.memBus.resp.bits.source === i.U) {
       tlState_queue(i) := TLState.s_done
     }.elsewhen(io.deq.fire && out_ptr.value === i.U) {
       tlState_queue(i) := TLState.s_idle
