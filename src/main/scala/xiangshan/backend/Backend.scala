@@ -72,7 +72,8 @@ class BackendImp(wrapper: Backend)(implicit p: Parameters) extends LazyModuleImp
 }
 
 class BackendInlined(val params: BackendParams)(implicit p: Parameters) extends LazyModule
-  with HasXSParameter {
+  with HasXSParameter
+  with TmuParams {
 
   override def shouldBeInlined: Boolean = true
 
@@ -189,6 +190,8 @@ class BackendInlined(val params: BackendParams)(implicit p: Parameters) extends 
   val fpExuBlock = params.fpSchdParams.map(x => LazyModule(new ExuBlock(x)))
   val vfExuBlock = params.vfSchdParams.map(x => LazyModule(new ExuBlock(x)))
   val wbFuBusyTable = LazyModule(new WbFuBusyTable(params))
+
+  val tmu_node = TLClientNode(Seq(clientParameters))
 
   lazy val module = new BackendInlinedImp(this)
 }
@@ -625,8 +628,8 @@ class BackendInlinedImp(override val wrapper: BackendInlined)(implicit p: Parame
 
   // tmu memory io connection
   private val tmu2mem = intExuBlock.io.tmu2mem.get
-  io.mem.tmu2mem.get.tlb <> tmu2mem.tlb
-  io.mem.tmu2mem.get.node := tmu2mem.node
+  io.mem.tmuTlb.get <> tmu2mem.tlb
+  wrapper.tmu_node := tmu2mem.node
 
   // to fpExuBlock
   fpExuBlock.io.flush := ctrlBlock.io.toExuBlock.flush
@@ -952,7 +955,7 @@ class BackendInlinedImp(override val wrapper: BackendInlined)(implicit p: Parame
   io.toTop.cpuCriticalError := csrio.criticalErrorState
 }
 
-class BackendMemIO(implicit p: Parameters, params: BackendParams) extends XSBundle with TmuParams {
+class BackendMemIO(implicit p: Parameters, params: BackendParams) extends XSBundle {
   // Since fast load replay always use load unit 0, Backend flips two load port to avoid conflicts
   val flippedLda = true
   // params alias
@@ -1020,10 +1023,7 @@ class BackendMemIO(implicit p: Parameters, params: BackendParams) extends XSBund
   val isStoreException = Output(Bool())
   val isVlsException = Output(Bool())
 
-  val tmu2mem = Option.when(params.hasTmu)(new Bundle {
-    val tlb = new TlbRequestIO
-    val node = TLClientNode(Seq(clientParameters))
-  })
+  val tmuTlb = Option.when(params.hasTmu)(new TlbRequestIO())
 
   // ATTENTION: The issue ports' sequence order should be the same as IQs' deq config
   private [backend] def issueUops: Seq[DecoupledIO[MemExuInput]] = {

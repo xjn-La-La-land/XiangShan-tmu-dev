@@ -71,7 +71,7 @@ class XSTile()(implicit p: Parameters) extends LazyModule
     l2top.inner.misc_l2_pmu := l2top.inner.ptw_logger := l2top.inner.ptw_to_l2_buffer.node := memBlock.ptw_to_l2_buffer.node
   }
 
-  l2top.inner.misc_l2_pmu := backend.module.io.mem.tmu2mem.get.node // connect l2 and tmu
+  l2top.inner.misc_l2_pmu := backend.tmu_node // connect l2 and tmu
 
   // L2 Prefetch
   l2top.inner.l2cache match {

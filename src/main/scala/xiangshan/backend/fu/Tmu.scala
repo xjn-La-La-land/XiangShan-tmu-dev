@@ -109,7 +109,7 @@ trait TmuParams extends HasXSParameter {
     def last: Bool = cnt === (numBurst-1).U
   }
   object TLState {
-    val s_idle :: s_wait_tlb :: s_wait_a :: s_wait_d :: s_done :: Nil = Enum(4)
+    val s_idle :: s_wait_tlb :: s_wait_a :: s_wait_d :: s_done :: Nil = Enum(5)
     def apply() = UInt(s_idle.getWidth.W)
   }
 }
