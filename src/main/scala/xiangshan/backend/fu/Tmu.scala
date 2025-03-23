@@ -568,9 +568,9 @@ with TmuParams with HasCircularQueuePtrHelper {
   io.tlb.req.bits.debug         := DontCare
 
   io.tlb.req_kill := false.B
-  io.tlb.resp.ready := tlb_req_entry.valid && !io.tlb.resp.bits.miss
+  io.tlb.resp.ready := tlb_req_entry.valid
   // tlb_ptr 指针的更新
-  when(io.tlb.resp.fire) {
+  when(io.tlb.resp.fire && !io.tlb.resp.bits.miss) {
     tlb_ptr := tlb_ptr + 1.U
   }
 
