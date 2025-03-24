@@ -27,9 +27,9 @@ class TmuDataInput(implicit p: Parameters) extends XSBundle with TmuParams {
   def tmmA_sign:   Bool = func(1) === "b1".U
   def tmmB_sign:   Bool = func(0) === "b1".U
 
-  def tmmA: UInt = imm(2, 0)
-  def tmmB: UInt = imm(5, 3)
-  def tmmC: UInt = imm(8, 6)
+  def tmmC: UInt = imm(2, 0)
+  def tmmA: UInt = imm(5, 3)
+  def tmmB: UInt = imm(8, 6)
 
   def base_vaddr: UInt = src(0) + ZeroExt(Cat(imm(31, 3), 0.U(3.W)), VAddrBits) // 目标块在内存中的起始虚地址
   def stride    : UInt = src(1)      // 主轴长度
@@ -91,10 +91,7 @@ trait TmuParams extends HasXSParameter {
     def tmmC: UInt = regs.tmmC
 
     def robIdx: RobPtr = regs.robIdx
-
-    def base_vaddr: UInt = regs.base_vaddr
-    def stride    : UInt = regs.stride
-    def mem_op    : UInt = regs.mem_op
+    def mem_op: UInt = regs.mem_op
 
     val row_vaddr = Option.when(needVaddr)(Reg(UInt(VAddrBits.W)))
     if (needVaddr) {
@@ -103,7 +100,7 @@ trait TmuParams extends HasXSParameter {
       }
     }
     def updateRowVaddr(): Unit = {
-      row_vaddr.get := row_vaddr.get + stride
+      row_vaddr.get := row_vaddr.get + regs.stride
     }
   }
 
