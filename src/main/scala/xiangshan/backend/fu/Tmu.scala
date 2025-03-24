@@ -698,8 +698,8 @@ class WallaceTree(val width: Int) extends Module {
   var currentSoutBits: Vec[UInt] = null
   var currentCoutBits: Vec[UInt] = null
   var i = 0
-  // add layer to compress width, until currentWidth = 1
-  while(currentWidth > 1) {
+  // add layer to compress width, until currentWidth = 2
+  while(currentWidth > 2) {
     val layer = Module(new WallaceTreeLayer(currentWidth))
     layer.io.inBits := currentInBits
     currentSoutBits = layer.io.soutBits
@@ -712,7 +712,7 @@ class WallaceTree(val width: Int) extends Module {
     i += layer.coutBitsWidth
   }
 
-  // now currentWidth = 1
+  // now currentWidth = 2
   io.S := currentSoutBits.head
   io.C := currentCoutBits.head
 
