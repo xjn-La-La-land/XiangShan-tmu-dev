@@ -12,7 +12,6 @@ import xiangshan.backend.fu.PMPRespBundle
 import freechips.rocketchip.diplomacy.{IdRange, LazyModule, LazyModuleImp, TransferSizes}
 import freechips.rocketchip.tilelink._
 import xiangshan.backend.rob.RobPtr
-import java.lang.reflect.Parameter
 
 
 class TmuDataInput(implicit p: Parameters) extends XSBundle with TmuParams {
@@ -316,6 +315,7 @@ class TmuModule (implicit p: Parameters) extends XSModule with TmuParams {
       DPAMatrix(i)(j).connect_in(tileA_words(i), tileB_words(s2_tileB_buf_ptr)(i)(j), tileC_words(i)(j), s2_regs.func)
     }
   }
+  val DPAMatrixPop = VecInit((0 until numTcolsw).map(c => DPAMatrix(numTrows-1)(c).out)).asUInt  // data pop from the last line
 
   val s2_row_walk_ptr = RowWalkPtr()
   when(s2_regs.isTDP && s2_s3_fire) {
@@ -398,7 +398,7 @@ class TmuModule (implicit p: Parameters) extends XSModule with TmuParams {
     ))
     tiles(i).io.wrow  := Mux(lsq_wen(i), lsqIO.tileData.wrow, s3_row_walk_ptr.value)
     tiles(i).io.wen   := s3_wen(i) || lsq_wen(i)
-    tiles(i).io.wdata := Mux(lsq_wen(i), lsqIO.tileData.wdata, tileC_buf.last) // data pop from the last line
+    tiles(i).io.wdata := Mux(lsq_wen(i), lsqIO.tileData.wdata, DPAMatrixPop)
   }
 
   lsqIO.tileData.rdata := tiles_rdatas(lsqIO.tileData.rtile)
@@ -407,55 +407,6 @@ class TmuModule (implicit p: Parameters) extends XSModule with TmuParams {
               s1_ren.zip(s3_wen).map(r => r._1 && r._2).reduce(_ || _)    // s1 read and s3 write the same tile
   s2_stall := s2_ren.zip(s3_wen).map(r => r._1 && r._2).reduce(_ || _)    // s2 read and s3 write the same tile
 
-}
-
-// Dot-product Accumulate
-// very rough implementation!!
-class int8DP4A extends Module {
-  val io = IO(new Bundle {
-    val func  = Input(FuOpType())
-    val a_vec = Input(Vec(4, UInt(8.W)))
-    val b_vec = Input(Vec(4, UInt(8.W)))
-    val c_in  = Input(UInt(32.W))
-    val c_out = Output(UInt(32.W))
-  })
-
-  val a_sign = io.func(1) === "b1".U
-  val b_sign = io.func(0) === "b1".U
-
-  val a_vec_widen = io.a_vec.map(a => Mux(a_sign, SignExt(a, 32), ZeroExt(a, 32)))
-  val b_vec_widen = io.b_vec.map(b => Mux(b_sign, SignExt(b, 32), ZeroExt(b, 32)))
-
-  val dp = a_vec_widen.zip(b_vec_widen).map { case(a, b) =>
-    LookupTreeDefault(io.func, 0.U, Seq(
-      (TMUOpType.tdpbss, (a.asSInt * b.asSInt).asUInt),
-      (TMUOpType.tdpbsu, (a.asSInt * b.asUInt).asUInt),
-      (TMUOpType.tdpbus, (a.asUInt * b.asSInt).asUInt),
-      (TMUOpType.tdpbuu, (a.asUInt * b.asUInt).asUInt))
-    )
-  }.reduce(_ + _)
-
-  io.c_out := io.c_in + dp
-}
-
-case class DPAUnit(data_typ: String = "int8") {
-  val dpa = if (data_typ == "int8") Some(Module(new int8DP4A)) else None
-
-  def connect_in(a: UInt, b: UInt, c: UInt, func: UInt): Unit = {
-    dpa.get.io.func  := func
-    dpa.get.io.a_vec := VecInit((0 until 4).map(i => a(8*i+7, 8*i)))
-    dpa.get.io.b_vec := VecInit((0 until 4).map(i => b(8*i+7, 8*i)))
-    dpa.get.io.c_in  := c
-  }
-
-  def connect_in(a_vec: Vec[UInt], b_vec: Vec[UInt], c: UInt, func: UInt): Unit = {
-    dpa.get.io.func  := func
-    dpa.get.io.a_vec := a_vec
-    dpa.get.io.b_vec := b_vec
-    dpa.get.io.c_in  := c
-  }
-
-  def out: UInt = dpa.get.io.c_out
 }
 
 
@@ -667,4 +618,200 @@ with TmuParams with HasCircularQueuePtrHelper {
       }
     }
   }
+}
+
+//////////////////////////////////////
+// Computing unit implementation
+//////////////////////////////////////
+
+// 使用 wallace tree 实现 8bit 乘法
+class OneBitAdder extends Module {
+  val io = IO(new Bundle {
+    val a    = Input(UInt(1.W))
+    val b    = Input(UInt(1.W))
+    val cin  = Input(UInt(1.W))
+    val s    = Output(UInt(1.W))
+    val cout = Output(UInt(1.W))
+  })
+  io.s    := io.a ^ io.b ^ io.cin
+  io.cout := (io.a & io.b) | (io.a & io.cin) | (io.b & io.cin)
+}
+
+// wallace tree layer
+class WallaceTreeLayer(val width: Int) extends Module {
+  def soutBitsWidth: Int = (width + 2) / 3 // ceil(w/3)
+  def coutBitsWidth: Int = (width + 1) / 3
+
+  val io = IO(new Bundle {
+    val inBits   = Input(Vec(width, UInt(1.W)))
+    val soutBits = Output(Vec(soutBitsWidth, UInt(1.W)))
+    val coutBits = Output(Vec(coutBitsWidth, UInt(1.W)))
+  })
+
+  // Get a full adder for every 3 bits
+  for (i <- 0 until width/3) {
+    val fullAdder = Module(new OneBitAdder)
+    fullAdder.io.a   := io.inBits(i*3)
+    fullAdder.io.b   := io.inBits(i*3+1)
+    fullAdder.io.cin := io.inBits(i*3+2)
+    io.soutBits(i)   := fullAdder.io.s
+    io.coutBits(i)   := fullAdder.io.cout
+  }
+  // Handle remaining 1 or 2 bits if width is not a multiple of 3
+  if (width%3 == 1) {
+    io.soutBits.last := io.inBits.last
+    io.coutBits.last := 0.U
+  } else if (width%3 == 2) {
+    val halfAdder = Module(new OneBitAdder)
+    halfAdder.io.a   := io.inBits(width-2)
+    halfAdder.io.b   := io.inBits(width-1)
+    halfAdder.io.cin := 0.U
+    io.soutBits.last := halfAdder.io.s
+    io.coutBits.last := halfAdder.io.cout
+  }
+}
+
+// Wallace Tree (Recursive Compression)
+class WallaceTree(val width: Int) extends Module {
+  def sin_width: Int = width
+  def cin_width: Int = {
+    var w = width
+    var nAddr = 0
+    while(w != 2) {
+      nAddr += (w + 1) / 3
+      w = (w + 2) / 3 + (w + 1) / 3
+    }
+    nAddr - 1
+  }
+  def cout_width: Int = cin_width
+
+  val io = IO(new Bundle {
+    val sin  = Input(Vec(sin_width, UInt(1.W)))
+    val cin  = Input(Vec(cin_width, UInt(1.W)))
+    val S    = Output(UInt(1.W))
+    val C    = Output(UInt(1.W))
+    val cout = Output(Vec(cout_width, UInt(1.W)))
+  })
+
+  var currentWidth: Int          = width
+  var currentInBits: Vec[UInt]   = io.sin
+  var currentSoutBits: Vec[UInt] = null
+  var currentCoutBits: Vec[UInt] = null
+  var i = 0
+  // add layer to compress width, until currentWidth = 1
+  while(currentWidth > 1) {
+    val layer = Module(new WallaceTreeLayer(currentWidth))
+    layer.io.inBits := currentInBits
+    currentSoutBits = layer.io.soutBits
+    currentCoutBits = layer.io.coutBits
+    currentWidth = layer.soutBitsWidth + layer.coutBitsWidth // soutBits + coutBits(from the previous tree cout)
+    currentInBits = VecInit(currentSoutBits ++ io.cin.slice(i, i + layer.coutBitsWidth))
+    currentCoutBits.zipWithIndex.foreach { case (c, j) =>
+      io.cout(i + j) := c
+    }
+    i += layer.coutBitsWidth
+  }
+
+  // now currentWidth = 1
+  io.S := currentSoutBits.head
+  io.C := currentCoutBits.head
+
+}
+
+
+class WTMulUnit(val width: Int) extends Module {
+  val io = IO(new Bundle {
+    val a = Input(UInt(width.W))
+    val b = Input(UInt(width.W))
+    val c = Output(UInt((2*width).W))
+  })
+
+  val (a, b) = (io.a, io.b)
+
+  // TODO: generate partial product
+  def num_pp: Int = (width+1)/2
+  val pp_s = Wire(Vec(num_pp, UInt((2*width).W))) // 部分积
+  val pp_c = Wire(Vec(num_pp, UInt(1.W)))         // 每个部分积对应一个进位
+  for (i <- Range(0, width, 2)) {
+    val a_flags = if(i == 0) Cat(a(1, 0), 0.U(1.W)) else if(i == width-1) SignExt(a(i, i-1), 3) else a(i+1, i-1)
+    val b_shift = SignExt(b, 2*width) << (2*i)
+    
+    pp_s(i) := Mux1H(Seq(
+      (a_flags === "b001".U || a_flags === "b010".U, b_shift),  // +X
+      (a_flags === "b101".U || a_flags === "b110".U, ~b_shift), // -X
+      (a_flags === "b011".U,                         (b_shift << 1.U)), // +2X
+      (a_flags === "b100".U,                         ~(b_shift << 1.U)) // -2X
+    ))
+    pp_c(i) := a_flags === "b101".U || a_flags === "b110".U || a_flags === "b100".U // -X or -2X(补码取复数需要取反加一)
+  }
+
+  // TODO: connect to wallace trees
+  var wtree_cout_last: Vec[UInt] = null
+  val wtree_S = Wire(Vec(2*width, UInt(1.W)))
+  val wtree_C = Wire(Vec(2*width, UInt(1.W)))
+  for (i <- 0 until (2*width)) {
+    val wtree = Module(new WallaceTree(num_pp))
+    wtree.io.sin := VecInit(pp_s.map{ case e => e(i)})
+    if(i == 0) {
+      wtree.io.cin := VecInit(pp_c.take(wtree.cin_width))
+      require(wtree.cin_width + 2 == num_pp)
+    }else {
+      wtree.io.cin := wtree_cout_last
+    }
+    wtree_S(i) := wtree.io.S
+    wtree_C(i) := wtree.io.C
+    wtree_cout_last = wtree.io.cout
+  }
+
+  val S = wtree_S.asUInt
+  val C = Cat(wtree_C.asUInt(2*width-2, 0), pp_c(num_pp-2)) // 最高位的进位舍弃
+
+  io.c := S + C + pp_c(num_pp-1)
+
+}
+
+
+// Dot-product Accumulate
+// very rough implementation!!
+class int8DP4A extends Module {
+  val io = IO(new Bundle {
+    val func  = Input(FuOpType())
+    val a_vec = Input(Vec(4, UInt(8.W)))
+    val b_vec = Input(Vec(4, UInt(8.W)))
+    val c_in  = Input(UInt(32.W))
+    val c_out = Output(UInt(32.W))
+  })
+
+  val a_sign = io.func(1) === "b1".U
+  val b_sign = io.func(0) === "b1".U
+
+  val c_vec = io.a_vec.zip(io.b_vec).map { case(a, b) =>
+    val muli8i8i32 = Module(new WTMulUnit(8+1))
+    muli8i8i32.io.a := Mux(a_sign, SignExt(a, 9), ZeroExt(a, 9))
+    muli8i8i32.io.b := Mux(b_sign, SignExt(b, 9), ZeroExt(b, 9))
+    muli8i8i32.io.c
+  }
+
+  val dp = ParallelSingedExpandingAdd(c_vec.map(e => e.asSInt))
+  io.c_out := io.c_in + SignExt(dp.asUInt, 32)
+}
+
+case class DPAUnit(data_typ: String = "int8") {
+  val dpa = if (data_typ == "int8") Some(Module(new int8DP4A)) else None
+
+  def connect_in(a: UInt, b: UInt, c: UInt, func: UInt): Unit = {
+    dpa.get.io.func  := func
+    dpa.get.io.a_vec := VecInit((0 until 4).map(i => a(8*i+7, 8*i)))
+    dpa.get.io.b_vec := VecInit((0 until 4).map(i => b(8*i+7, 8*i)))
+    dpa.get.io.c_in  := c
+  }
+
+  def connect_in(a_vec: Vec[UInt], b_vec: Vec[UInt], c: UInt, func: UInt): Unit = {
+    dpa.get.io.func  := func
+    dpa.get.io.a_vec := a_vec
+    dpa.get.io.b_vec := b_vec
+    dpa.get.io.c_in  := c
+  }
+
+  def out: UInt = dpa.get.io.c_out
 }
