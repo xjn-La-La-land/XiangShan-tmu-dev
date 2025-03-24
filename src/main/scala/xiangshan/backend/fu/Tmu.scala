@@ -734,15 +734,15 @@ class WTMulUnit(val width: Int) extends Module {
   val pp_c = Wire(Vec(num_pp, UInt(1.W)))         // 每个部分积对应一个进位
   for (i <- Range(0, width, 2)) {
     val a_flags = if(i == 0) Cat(a(1, 0), 0.U(1.W)) else if(i == width-1) SignExt(a(i, i-1), 3) else a(i+1, i-1)
-    val b_shift = SignExt(b, 2*width) << (2*i)
+    val b_shift = SignExt(b, 2*width) << i
     
-    pp_s(i) := Mux1H(Seq(
+    pp_s(i/2) := Mux1H(Seq(
       (a_flags === "b001".U || a_flags === "b010".U, b_shift),  // +X
       (a_flags === "b101".U || a_flags === "b110".U, ~b_shift), // -X
       (a_flags === "b011".U,                         (b_shift << 1.U)), // +2X
       (a_flags === "b100".U,                         ~(b_shift << 1.U)) // -2X
     ))
-    pp_c(i) := a_flags === "b101".U || a_flags === "b110".U || a_flags === "b100".U // -X or -2X(补码取复数需要取反加一)
+    pp_c(i/2) := a_flags === "b101".U || a_flags === "b110".U || a_flags === "b100".U // -X or -2X(补码取复数需要取反加一)
   }
 
   // TODO: connect to wallace trees
