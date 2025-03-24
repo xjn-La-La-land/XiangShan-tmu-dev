@@ -288,6 +288,7 @@ class TmuModule (implicit p: Parameters) extends XSModule with TmuParams {
   lsqIO.enq.bits.row    := s1_row_walk_ptr.value
   lsqIO.enq.bits.mem_op := s1_regs.mem_op
   lsqIO.enq.bits.vaddr  := s1_regs.row_vaddr.get
+  lsqIO.enq.bits.robIdx := s1_regs.robIdx
 
   when(lsqIO.enq.fire) {
     s1_regs.updateRowVaddr()
