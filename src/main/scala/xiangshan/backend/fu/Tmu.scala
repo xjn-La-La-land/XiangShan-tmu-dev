@@ -512,7 +512,7 @@ with TmuParams with HasCircularQueuePtrHelper {
     val robIdx  = new RobPtr
   }))
   val paddr_queue = RegInit(VecInit(Seq.fill(tileLSQueue_sz)({
-    val paddr = ValidIO(UInt(PAddrBits.W))
+    val paddr = Wire(Valid(UInt(PAddrBits.W)))
     paddr.valid := false.B
     paddr.bits  := 0.U
     paddr
