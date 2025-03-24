@@ -127,8 +127,8 @@ trait TmuParams extends HasXSParameter {
     }
     def last: Bool = cnt === (numBurst-1).U
   }
-  object TLState {
-    val s_idle :: s_wait_tlb :: s_wait_a :: s_wait_d :: s_done :: Nil = Enum(5)
+  object LSQState {
+    val s_idle :: s_wait_a :: s_wait_d :: s_done :: Nil = Enum(4)
     def apply() = UInt(s_idle.getWidth.W)
   }
 }
@@ -468,12 +468,12 @@ class TmuLSQueueEntry(implicit p: Parameters) extends XSBundle with TmuParams{
   val vaddr   = UInt(VAddrBits.W)
   val paddr   = UInt(PAddrBits.W)
   val paddr_v = Bool()
-  val state   = TLState()
+  val state   = LSQState()
   val robIdx  = new RobPtr
 
   def isLoad:  Bool = mem_op(1)
   def isStore: Bool = mem_op(0)
-  def valid:   Bool = state =/= TLState.s_idle && state =/= TLState.s_done
+  def valid:   Bool = state =/= LSQState.s_idle && state =/= LSQState.s_done
 }
 
 class TmuLSQueueToTiles(implicit val p: Parameters) extends Bundle with TmuParams {
@@ -511,11 +511,13 @@ with TmuParams with HasCircularQueuePtrHelper {
     val vaddr   = UInt(VAddrBits.W)
     val robIdx  = new RobPtr
   }))
-  val paddr_queue = Reg(Vec(tileLSQueue_sz, new Bundle{
-    val paddr   = UInt(PAddrBits.W)
-    val paddr_v = Bool()
-  }))
-  val tlState_queue = RegInit(VecInit(Seq.fill(tileLSQueue_sz)(TLState.s_idle)))
+  val paddr_queue = RegInit(VecInit(Seq.fill(tileLSQueue_sz)({
+    val paddr = ValidIO(UInt(PAddrBits.W))
+    paddr.valid := false.B
+    paddr.bits  := 0.U
+    paddr
+  })))
+  val state_queue = RegInit(VecInit(Seq.fill(tileLSQueue_sz)(LSQState.s_idle)))
 
   def ToTmuLSQueueEntry(ptr: TmuLSQueuePtr): TmuLSQueueEntry = {
     val entry = Wire(new TmuLSQueueEntry)
@@ -524,9 +526,9 @@ with TmuParams with HasCircularQueuePtrHelper {
     entry.mem_op  := ctrl_queue(ptr.value).mem_op
     entry.vaddr   := ctrl_queue(ptr.value).vaddr
     entry.robIdx  := ctrl_queue(ptr.value).robIdx
-    entry.paddr   := paddr_queue(ptr.value).paddr
-    entry.paddr_v := paddr_queue(ptr.value).paddr_v
-    entry.state   := tlState_queue(ptr.value)
+    entry.paddr   := paddr_queue(ptr.value).bits
+    entry.paddr_v := paddr_queue(ptr.value).valid
+    entry.state   := state_queue(ptr.value)
     entry
   }
 
@@ -549,7 +551,14 @@ with TmuParams with HasCircularQueuePtrHelper {
 
   // TLB request
   val tlb_req_entry = ToTmuLSQueueEntry(tlb_ptr)
-  io.tlb.req.valid              := tlb_req_entry.valid // block tlb
+  val tlbReqFlag = RegInit(true.B)
+  when(io.tlb.resp.fire && !io.tlb.resp.bits.miss) {
+    tlbReqFlag := true.B
+  }.elsewhen(io.tlb.req.fire) {
+    tlbReqFlag := false.B
+  }
+  
+  io.tlb.req.valid              := tlbReqFlag && tlb_req_entry.valid // blocked tlb
   io.tlb.req.bits.cmd           := Mux(tlb_req_entry.isLoad, TlbCmd.read, TlbCmd.write)
   io.tlb.req.bits.vaddr         := tlb_req_entry.vaddr
   io.tlb.req.bits.fullva        := DontCare
@@ -564,11 +573,10 @@ with TmuParams with HasCircularQueuePtrHelper {
   io.tlb.req.bits.isPrefetch    := false.B
   io.tlb.req.bits.no_translate  := false.B
   io.tlb.req.bits.pmp_addr      := RegEnable(io.tlb.resp.bits.paddr(0), io.tlb.resp.fire) // pmp check not activated in tmu
-
   io.tlb.req.bits.debug         := DontCare
 
   io.tlb.req_kill := false.B
-  io.tlb.resp.ready := tlb_req_entry.valid
+  io.tlb.resp.ready := tlb_req_entry.valid // always ready to receive tlb response
   // tlb_ptr 指针的更新
   when(io.tlb.resp.fire && !io.tlb.resp.bits.miss) {
     tlb_ptr := tlb_ptr + 1.U
@@ -580,8 +588,8 @@ with TmuParams with HasCircularQueuePtrHelper {
   io.tileData.rrow  := tlReq_entry.row
   
   // load to store check!
-  val l2sCheck = tlState_queue.zip(ctrl_queue).map { case (state, ctrl) =>
-    state === TLState.s_wait_d && ctrl.mem_op(1) &&
+  val l2sCheck = state_queue.zip(ctrl_queue).map { case (state, ctrl) =>
+    state === LSQState.s_wait_d && ctrl.mem_op(1) &&
     ctrl.tile === tlReq_entry.tile && ctrl.row === tlReq_entry.row // 未写回的 load 请求
   }.reduce(_ || _)
   io.tileData.ren   := tlReq_entry.valid && tlReq_entry.isStore && !l2sCheck && tlReq_entry.paddr_v // 已经完成 vaddr -> paddr 转换
@@ -628,7 +636,7 @@ with TmuParams with HasCircularQueuePtrHelper {
   io.tileData.wen   := io.memBus.resp.fire && !io.memBus.resp.bits.isWrite && tlResp_cnt.last // write back to tmm when the last beat come
 
   // tlResp_ptr 指针的更新
-  when(tlState_queue(tlResp_ptr.value) === TLState.s_done || tlRespDone && tlResp_ptr.value === io.memBus.resp.bits.source) {
+  when(state_queue(tlResp_ptr.value) === LSQState.s_done || tlRespDone && tlResp_ptr.value === io.memBus.resp.bits.source) {
     tlResp_ptr := tlResp_ptr + 1.U
   }
 
@@ -644,23 +652,27 @@ with TmuParams with HasCircularQueuePtrHelper {
   }
   for(i <- 0 until tileLSQueue_sz) {
     when(io.tlb.resp.fire && tlb_ptr.value === i.U) {
-      paddr_queue(i).paddr   := io.tlb.resp.bits.paddr(0)
-      paddr_queue(i).paddr_v := true.B
+      paddr_queue(i).bits   := io.tlb.resp.bits.paddr(0)
+      paddr_queue(i).valid  := true.B
     }.elsewhen(io.deq.fire && out_ptr.value === i.U) {
-      paddr_queue(i).paddr_v := false.B
+      paddr_queue(i).valid  := false.B
     }
   }
   for(i <- 0 until tileLSQueue_sz) {
-    when(io.enq.fire && in_ptr.value === i.U) {
-      tlState_queue(i) := TLState.s_wait_tlb
-    }.elsewhen(io.tlb.resp.fire && tlb_ptr.value === i.U) {
-      tlState_queue(i) := TLState.s_wait_a
-    }.elsewhen(tlReqDone && tlReq_ptr.value === i.U) {
-      tlState_queue(i) := TLState.s_wait_d
-    }.elsewhen(tlRespDone && io.memBus.resp.bits.source === i.U) {
-      tlState_queue(i) := TLState.s_done
-    }.elsewhen(io.deq.fire && out_ptr.value === i.U) {
-      tlState_queue(i) := TLState.s_idle
+    switch(state_queue(i)) {
+      is(LSQState.s_idle) {
+        state_queue(i) := Mux(io.enq.fire && in_ptr.value === i.U, LSQState.s_wait_a, LSQState.s_idle)
+      }
+      is(LSQState.s_wait_a) {
+        state_queue(i) := Mux(tlReqDone && tlReq_ptr.value === i.U, LSQState.s_wait_d, LSQState.s_wait_a)
+      }
+      is(LSQState.s_wait_d) {
+        state_queue(i) := Mux(io.deq.fire && out_ptr.value === i.U,             LSQState.s_idle, 
+                          Mux(tlRespDone && io.memBus.resp.bits.source === i.U, LSQState.s_done, LSQState.s_wait_d))
+      }
+      is(LSQState.s_done) {
+        state_queue(i) := Mux(io.deq.fire && out_ptr.value === i.U, LSQState.s_idle, LSQState.s_done)
+      }
     }
   }
 }
