@@ -474,6 +474,7 @@ class TmuLSQueueEntry(implicit p: Parameters) extends XSBundle with TmuParams{
   def isLoad:  Bool = mem_op(1)
   def isStore: Bool = mem_op(0)
   def valid:   Bool = state =/= LSQState.s_idle && state =/= LSQState.s_done
+  def ready_go: Bool = state === LSQState.s_done
 }
 
 class TmuLSQueueToTiles(implicit val p: Parameters) extends Bundle with TmuParams {
@@ -535,7 +536,6 @@ with TmuParams with HasCircularQueuePtrHelper {
   val in_ptr     = RegInit(0.U.asTypeOf(new TmuLSQueuePtr))
   val tlb_ptr    = RegInit(0.U.asTypeOf(new TmuLSQueuePtr))
   val tlReq_ptr  = RegInit(0.U.asTypeOf(new TmuLSQueuePtr))
-  val tlResp_ptr = RegInit(0.U.asTypeOf(new TmuLSQueuePtr))
   val out_ptr    = RegInit(0.U.asTypeOf(new TmuLSQueuePtr))
 
   io.enq.ready := !isFull(in_ptr, out_ptr)
@@ -543,7 +543,7 @@ with TmuParams with HasCircularQueuePtrHelper {
     in_ptr := in_ptr + 1.U
   }
 
-  io.deq.valid := isAfter(out_ptr, tlResp_ptr)
+  io.deq.valid := ToTmuLSQueueEntry(out_ptr).ready_go
   when(io.deq.fire) {
     out_ptr := out_ptr + 1.U
   }
@@ -596,7 +596,7 @@ with TmuParams with HasCircularQueuePtrHelper {
   val tileRdata_valid = ValidHold(io.tileData.ren, io.memBus.req.fire)
 
   val tileReq_cnt = TLTransCnt()
-  when(io.memBus.req.fire) {
+  when(io.memBus.req.fire && tlReq_entry.isStore) {
     tileReq_cnt.update()
   }
   val tileRdata_vec = VecInit((0 until numBurst).map(i => io.tileData.rdata(l1BusDataWidth*(i+1)-1, l1BusDataWidth*i)))
@@ -635,11 +635,6 @@ with TmuParams with HasCircularQueuePtrHelper {
   io.tileData.wdata := tileWdata
   io.tileData.wen   := io.memBus.resp.fire && !io.memBus.resp.bits.isWrite && tlResp_cnt.last // write back to tmm when the last beat come
 
-  // tlResp_ptr 指针的更新
-  when(state_queue(tlResp_ptr.value) === LSQState.s_done || tlRespDone && tlResp_ptr.value === io.memBus.resp.bits.source) {
-    tlResp_ptr := tlResp_ptr + 1.U
-  }
-
   // LSQueue 表项的更新
   for(i <- 0 until tileLSQueue_sz) {
     when(io.enq.fire && in_ptr.value === i.U) {
@@ -667,8 +662,7 @@ with TmuParams with HasCircularQueuePtrHelper {
         state_queue(i) := Mux(tlReqDone && tlReq_ptr.value === i.U, LSQState.s_wait_d, LSQState.s_wait_a)
       }
       is(LSQState.s_wait_d) {
-        state_queue(i) := Mux(io.deq.fire && out_ptr.value === i.U,             LSQState.s_idle, 
-                          Mux(tlRespDone && io.memBus.resp.bits.source === i.U, LSQState.s_done, LSQState.s_wait_d))
+        state_queue(i) := Mux(tlRespDone && io.memBus.resp.bits.source === i.U, LSQState.s_done, LSQState.s_wait_d)
       }
       is(LSQState.s_done) {
         state_queue(i) := Mux(io.deq.fire && out_ptr.value === i.U, LSQState.s_idle, LSQState.s_done)
