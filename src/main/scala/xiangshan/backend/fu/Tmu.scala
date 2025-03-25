@@ -660,7 +660,6 @@ class WallaceTreeLayer(val width: Int) extends Module {
   // Handle remaining 1 or 2 bits if width is not a multiple of 3
   if (width%3 == 1) {
     io.soutBits.last := io.inBits.last
-    io.coutBits.last := 0.U
   } else if (width%3 == 2) {
     val halfAdder = Module(new OneBitAdder)
     halfAdder.io.a   := io.inBits(width-2)
@@ -678,8 +677,8 @@ class WallaceTree(val width: Int) extends Module {
     var w = width
     var nAddr = 0
     while(w != 2) {
-      nAddr += (w + 1) / 3
-      w = (w + 2) / 3 + (w + 1) / 3
+      nAddr += (w + 1) / 3          // coutBitsWidth
+      w = (w + 2) / 3 + (w + 1) / 3 // soutBitsWidth + coutBitsWidth
     }
     nAddr - 1
   }
@@ -707,7 +706,8 @@ class WallaceTree(val width: Int) extends Module {
     currentWidth = layer.soutBitsWidth + layer.coutBitsWidth // soutBits + coutBits(from the previous tree cout)
     currentInBits = VecInit(currentSoutBits ++ io.cin.slice(i, i + layer.coutBitsWidth))
     currentCoutBits.zipWithIndex.foreach { case (c, j) =>
-      io.cout(i + j) := c
+      if (i+j < cout_width)
+        io.cout(i+j) := c
     }
     i += layer.coutBitsWidth
   }
