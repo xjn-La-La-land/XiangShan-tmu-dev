@@ -14,30 +14,6 @@ import freechips.rocketchip.tilelink._
 import xiangshan.backend.rob.RobPtr
 
 
-class TmuDataInput(implicit p: Parameters) extends XSBundle with TmuParams {
-  val src    = Vec(2, UInt(XLEN.W))
-  val imm    = UInt(32.W)
-  val func   = FuOpType()
-  val robIdx = new RobPtr
-
-  def isTileLoad:  Bool = func === TMUOpType.tileload
-  def isTileStore: Bool = func === TMUOpType.tilestore
-  def isTDP:       Bool = isTdp(func)
-  def tmmA_sign:   Bool = func(1) === "b1".U
-  def tmmB_sign:   Bool = func(0) === "b1".U
-
-  def tmmC: UInt = imm(2, 0)
-  def tmmA: UInt = imm(5, 3)
-  def tmmB: UInt = imm(8, 6)
-
-  def base_vaddr: UInt = src(0) + ZeroExt(Cat(imm(31, 3), 0.U(3.W)), VAddrBits) // 目标块在内存中的起始虚地址
-  def stride    : UInt = src(1)      // 主轴长度
-  def row_vaddr_vec: Vec[UInt] = VecInit( // 每行的虚拟地址(实际不会这样使用)
-    (0 until numTrows).scanLeft(base_vaddr) { (vaddr, _) => vaddr + stride }
-  )
-  def mem_op : UInt = Cat(isTileLoad, isTileStore)
-}
-
 trait TmuParams extends HasXSParameter {
   val numTmm    : Int = 8
   val numTrows  : Int = 16
@@ -61,8 +37,8 @@ trait TmuParams extends HasXSParameter {
     def update(): Unit = {
       ptr := Mux(overflow, ptr, ptr + 1.U)
     }
-    def overflow: Bool = ptr === numTrows.U
-    def ready_go: Bool = ptr === (numTrows-1).U || overflow // ptr = 15 时就可以拉高 out_valid，在下一个上升沿握手
+    def overflow: Bool = ptr === (numTrows + 1).U
+    def ready_go: Bool = ptr === numTrows.U || overflow // ptr = 15 时就可以拉高 out_valid，在下一个上升沿握手
     def reset(): Unit = {
       ptr := init.U
     }
@@ -128,6 +104,32 @@ trait TmuParams extends HasXSParameter {
     def apply() = UInt(s_idle.getWidth.W)
   }
 }
+
+
+class TmuDataInput(implicit p: Parameters) extends XSBundle with TmuParams {
+  val src    = Vec(2, UInt(XLEN.W))
+  val imm    = UInt(32.W)
+  val func   = FuOpType()
+  val robIdx = new RobPtr
+
+  def isTileLoad:  Bool = func === TMUOpType.tileload
+  def isTileStore: Bool = func === TMUOpType.tilestore
+  def isTDP:       Bool = isTdp(func)
+  def tmmA_sign:   Bool = func(1) === "b1".U
+  def tmmB_sign:   Bool = func(0) === "b1".U
+
+  def tmmC: UInt = imm(2, 0)
+  def tmmA: UInt = imm(5, 3)
+  def tmmB: UInt = imm(8, 6)
+
+  def base_vaddr: UInt = src(0) + ZeroExt(Cat(imm(31, 3), 0.U(3.W)), VAddrBits) // 目标块在内存中的起始虚地址
+  def stride    : UInt = src(1)      // 主轴长度
+  def row_vaddr_vec: Vec[UInt] = VecInit( // 每行的虚拟地址(实际不会这样使用)
+    (0 until numTrows).scanLeft(base_vaddr) { (vaddr, _) => vaddr + stride }
+  )
+  def mem_op : UInt = Cat(isTileLoad, isTileStore)
+}
+
 
 // Tmm register (sram implementation)
 // sync read, sync write(1 cycle latency)
@@ -294,7 +296,7 @@ class TmuModule (implicit p: Parameters) extends XSModule with TmuParams {
   }
 
   s1_lsq_done := lsqIO.enq.fire && s1_row_walk_ptr.ready_go
-  s1_out_valid := s1_regs.isTDP && s1_regs.valid && s1_row_walk_ptr.overflow
+  s1_out_valid := s1_regs.isTDP && s1_regs.valid && s1_row_walk_ptr.ready_go
   io.in.ready  := s1_s2_fire || s1_lsq_done || !s1_regs.valid
 
   /////////////////////////////////////////
@@ -328,7 +330,7 @@ class TmuModule (implicit p: Parameters) extends XSModule with TmuParams {
   }
 
 
-  s2_out_valid := s2_regs.valid && s2_row_walk_ptr.overflow
+  s2_out_valid := s2_regs.valid && s2_row_walk_ptr.ready_go
   s2_in_ready  := s2_s3_fire || !s2_regs.valid
 
   ////////////////////////////////////
