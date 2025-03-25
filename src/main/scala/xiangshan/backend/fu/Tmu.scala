@@ -38,7 +38,7 @@ trait TmuParams extends HasXSParameter {
       ptr := Mux(overflow, ptr, ptr + 1.U)
     }
     def overflow: Bool = ptr === (numTrows + 1).U
-    def ready_go: Bool = ptr === numTrows.U || overflow // ptr = 15 时就可以拉高 out_valid，在下一个上升沿握手
+    def ready_go: Bool = ptr === numTrows.U || overflow // ptr = 16 时就可以拉高 out_valid，在下一个上升沿握手
     def reset(): Unit = {
       ptr := init.U
     }
@@ -295,7 +295,7 @@ class TmuModule (implicit p: Parameters) extends XSModule with TmuParams {
     s1_regs.updateRowVaddr()
   }
 
-  s1_lsq_done := lsqIO.enq.fire && s1_row_walk_ptr.ready_go
+  s1_lsq_done  := lsqIO.enq.fire && s1_row_walk_ptr.value === (numTrows-1).U
   s1_out_valid := s1_regs.isTDP && s1_regs.valid && s1_row_walk_ptr.ready_go
   io.in.ready  := s1_s2_fire || s1_lsq_done || !s1_regs.valid
 
