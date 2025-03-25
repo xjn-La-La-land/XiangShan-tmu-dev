@@ -388,9 +388,9 @@ class TmuModule (implicit p: Parameters) extends XSModule with TmuParams {
   /////////////////////////////////
   // Manage tiles read/write ports
   /////////////////////////////////
-  val s1_ren = VecInit((0 until numTmm).map(i => s1_regs.valid && s1_regs.isTDP && (s1_regs.tmmB === i.U)))
-  val s2_ren = VecInit((0 until numTmm).map(i => s2_regs.valid && s2_regs.isTDP && (s2_regs.tmmA === i.U || s2_regs.tmmC === i.U)))
-  val s3_wen = VecInit((0 until numTmm).map(i => s3_regs.valid && s3_regs.isTDP && (s3_regs.tmmC === i.U)))
+  val s1_ren = VecInit((0 until numTmm).map(i => s1_regs.valid && s1_regs.isTDP && s1_row_walk_ptr.valid && (s1_regs.tmmB === i.U)))
+  val s2_ren = VecInit((0 until numTmm).map(i => s2_regs.valid && s2_row_walk_ptr.valid && (s2_regs.tmmA === i.U || s2_regs.tmmC === i.U)))
+  val s3_wen = VecInit((0 until numTmm).map(i => s3_regs.valid && s3_row_walk_ptr.valid && (s3_regs.tmmC === i.U)))
   val lsq_ren = VecInit((0 until numTmm).map(i => lsqIO.tileData.ren && (lsqIO.tileData.rtile === i.U)))
   val lsq_wen = VecInit((0 until numTmm).map(i => lsqIO.tileData.wen && (lsqIO.tileData.wtile === i.U)))
 
