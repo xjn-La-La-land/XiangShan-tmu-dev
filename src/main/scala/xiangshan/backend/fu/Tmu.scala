@@ -33,12 +33,12 @@ trait TmuParams extends HasXSParameter {
   case class RowWalkPtr(init: Int = 0) {
     private val ptr = RegInit(init.U(log2Ceil(numTrows + 1).W))
     def value: UInt = ptr(row_idx_w-1, 0)
-    def next_value: UInt = value + 1.U // for synchronous read
     def update(): Unit = {
       ptr := Mux(overflow, ptr, ptr + 1.U)
     }
     def overflow: Bool = ptr === (numTrows + 1).U
-    def ready_go: Bool = ptr === numTrows.U || overflow // ptr = 16 时就可以拉高 out_valid，在下一个上升沿握手
+    def ready_go: Bool = ptr === numTrows.U || overflow // ptr = 16 时，第15行的数据已经读出来，可以拉高 out_valid，在下一个上升沿握手
+    def valid:    Bool = !ready_go // ptr = 0~15
     def reset(): Unit = {
       ptr := init.U
     }
