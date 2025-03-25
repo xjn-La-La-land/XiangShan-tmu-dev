@@ -129,9 +129,12 @@ trait TmuParams extends HasXSParameter {
   }
 }
 
-// Tmm register (a rough implementation)
+// Tmm register (sram implementation)
+// sync read, sync write(1 cycle latency)
+// no write to read bypass
 class TileReg (implicit val p: Parameters) extends Module with TmuParams {
   val io = IO(new Bundle {
+    val ren   = Input(Bool())
     val rrow  = Input(UInt(row_idx_w.W))
     val rdata = Output(UInt(row_data_w.W))
     val wrow  = Input(UInt(row_idx_w.W))
@@ -139,13 +142,13 @@ class TileReg (implicit val p: Parameters) extends Module with TmuParams {
     val wdata = Input(UInt(row_data_w.W))
   })
 
-  private val tile = Reg(Vec(numTrows, UInt(row_data_w.W)))
-  // read: 1 cycle latency; write: 1 cycle latency
-  // no write to read bypass
-  io.rdata := tile(GatedRegNext(io.rrow))
-  when(io.wen) {
-    tile(io.wrow) := io.wdata
-  }
+  private val tile = Module(new SRAMTemplate(UInt(row_data_w.W), set = numTrows, withClockGate = true))
+  tile.io.r.req.valid       := io.ren
+  tile.io.r.req.bits.setIdx := io.rrow
+  io.rdata                  := tile.io.r.resp.data(0)
+  tile.io.w.req.valid       := io.wen
+  tile.io.w.req.bits.setIdx := io.wrow
+  tile.io.w.req.bits.data   := VecInit(io.wdata)
 }
 
 
@@ -391,6 +394,7 @@ class TmuModule (implicit p: Parameters) extends XSModule with TmuParams {
 
 
   for (i <- 0 until numTmm) {
+    tiles(i).io.ren   := s1_ren(i) || s2_ren(i) || lsq_ren(i)
     tiles(i).io.rrow  := PriorityMux(Seq(
       lsq_ren(i) -> lsqIO.tileData.rrow,
       s2_ren(i)  -> s2_row_walk_ptr.value,
@@ -719,6 +723,7 @@ class WallaceTree(val width: Int) extends Module {
 }
 
 
+// Wallace Tree Multiplier
 class WTMulUnit(val width: Int) extends Module {
   val io = IO(new Bundle {
     val a = Input(UInt(width.W))
