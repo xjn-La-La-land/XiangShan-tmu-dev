@@ -571,8 +571,10 @@ object XSTrapDecode extends DecodeConstants {
 // HINT: RISCV Xtm extension decode constants
 object XtmDecode extends DecodeConstants {
   override val decodeArray: Array[(BitPat, XSDecodeBase)] = Array(
-    TILELOADD  -> XSDecode(SrcType.reg, SrcType.reg, SrcType.X, FuType.tmu, TMUOpType.tileload,  SelImm.IMM_S, noSpec = T, blockBack = T),
-    TILESTORED -> XSDecode(SrcType.reg, SrcType.reg, SrcType.X, FuType.tmu, TMUOpType.tilestore, SelImm.IMM_S, noSpec = T, blockBack = T),
+    // TILELOADD  -> XSDecode(SrcType.reg, SrcType.reg, SrcType.X, FuType.tmu, TMUOpType.tileload,  SelImm.IMM_S, noSpec = T, blockBack = T),
+    // TILESTORED -> XSDecode(SrcType.reg, SrcType.reg, SrcType.X, FuType.tmu, TMUOpType.tilestore, SelImm.IMM_S, noSpec = T, blockBack = T),
+    TILELOADD  -> XSDecode(SrcType.reg, SrcType.reg, SrcType.X, FuType.tmu, TMUOpType.tileload,  SelImm.IMM_S),
+    TILESTORED -> XSDecode(SrcType.reg, SrcType.reg, SrcType.X, FuType.tmu, TMUOpType.tilestore, SelImm.IMM_S),
     TDPBSSD    -> XSDecode(SrcType.reg, SrcType.reg, SrcType.X, FuType.tmu, TMUOpType.tdpbss,    SelImm.IMM_S),
     TDPBSUD    -> XSDecode(SrcType.X  , SrcType.X  , SrcType.X, FuType.tmu, TMUOpType.tdpbsu,    SelImm.IMM_S),
     TDPBUSD    -> XSDecode(SrcType.X  , SrcType.X  , SrcType.X, FuType.tmu, TMUOpType.tdpbus,    SelImm.IMM_S),
@@ -953,8 +955,9 @@ class DecodeUnit(implicit p: Parameters) extends XSModule with DecodeUnitConstan
   private val isAMO = FuType.isAMO(decodedInst.fuType)
   private val isVStore = FuType.isVStore(decodedInst.fuType)
   private val isBranch = !decodedInst.preDecodeInfo.notCFI || FuType.isJump(decodedInst.fuType)
+  private val isTileLS = FuType.isTmu(decodedInst.fuType) && TMUOpType.isLoadStore(decodedInst.fuOpType)
 
-  decodedInst.commitType := Cat(isLs | isVls, (isStore && !isAMO) | isVStore | isBranch)
+  decodedInst.commitType := Cat(isTileLS, 0.U(1.W), isLs | isVls, (isStore && !isAMO) | isVStore | isBranch)
 
   decodedInst.isVset := FuType.isVset(decodedInst.fuType)
 

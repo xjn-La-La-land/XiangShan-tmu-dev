@@ -467,13 +467,13 @@ with TmuParams with HasCircularQueuePtrHelper {
     val vaddr   = UInt(VAddrBits.W)
     val robIdx  = new RobPtr
   }))
-  val paddr_queue = RegInit(VecInit(Seq.fill(tileLSQueue_sz)({
+  val paddr_queue = RegInit(VecInit.fill(tileLSQueue_sz)({
     val paddr = Wire(Valid(UInt(PAddrBits.W)))
     paddr.valid := false.B
     paddr.bits  := 0.U
     paddr
-  })))
-  val state_queue = RegInit(VecInit(Seq.fill(tileLSQueue_sz)(LSQState.s_idle)))
+  }))
+  val state_queue = RegInit(VecInit.fill(tileLSQueue_sz)(LSQState.s_idle))
 
   def ToTmuLSQueueEntry(ptr: TmuLSQueuePtr): TmuLSQueueEntry = {
     val entry = Wire(new TmuLSQueueEntry)
@@ -799,7 +799,7 @@ class int8DP4A extends Module {
     muli8i8i32.io.c
   }
 
-  val dp = ParallelSingedExpandingAdd(c_vec.map(e => e.asSInt))
+  val dp = ParallelSingedExpandingAdd(c_vec.map(_.asSInt))
   io.c_out := io.c_in + SignExt(dp.asUInt, 32)
 }
 

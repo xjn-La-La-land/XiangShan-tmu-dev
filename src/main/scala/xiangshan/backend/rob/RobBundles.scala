@@ -253,6 +253,8 @@ class RobEnqIO(implicit p: Parameters) extends XSBundle {
   val canAccept = Output(Bool())
   val canAcceptForDispatch = Output(Bool())
   val isEmpty = Output(Bool())
+  val hasLoadStore = Output(Bool()) // for tileloadd/tilestored
+  val hasTileLS    = Output(Bool())
   // valid vector, for robIdx gen and walk
   val needAlloc = Vec(RenameWidth, Input(Bool()))
   val req = Vec(RenameWidth, Flipped(ValidIO(new DynInst)))

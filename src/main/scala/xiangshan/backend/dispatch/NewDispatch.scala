@@ -735,6 +735,8 @@ class NewDispatch(implicit p: Parameters) extends XSModule with HasPerfEvents wi
   val isAMO    = VecInit(fromRename.map(req => FuType.isAMO(req.bits.fuType)))
   val isBlockBackward  = VecInit(fromRename.map(x => x.valid && x.bits.blockBackward))
   val isWaitForward    = VecInit(fromRename.map(x => x.valid && x.bits.waitForward))
+  val isLoadStore      = VecInit(fromRename.map(x => x.valid && CommitType.isLoadStore(x.bits.commitType)))
+  val isTileLS         = VecInit(fromRename.map(x => x.valid && CommitType.isTileLS(x.bits.commitType)))
 
   val updatedUop = Wire(Vec(RenameWidth, new DynInst))
   val checkpoint_id = RegInit(0.U(64.W))
@@ -827,12 +829,23 @@ class NewDispatch(implicit p: Parameters) extends XSModule with HasPerfEvents wi
     else Cat((0 until i).map(j => nextCanOut(j))).andR
   ))
 
+  private val blockedByLoadStore = Wire(Vec(RenameWidth, Bool()))
+  private val blockedByTileLS    = Wire(Vec(RenameWidth, Bool()))
+  blockedByLoadStore(0) := io.enqRob.hasLoadStore && isTileLS(0)
+  blockedByTileLS(0)    := io.enqRob.hasTileLS    && isLoadStore(0)
+  for (i <- 1 until RenameWidth) {
+    blockedByLoadStore(i) := blockedByLoadStore(i - 1) || (io.enqRob.hasLoadStore || isLoadStore.take(i).reduce(_ || _)) && isTileLS(i)
+    blockedByTileLS(i)    := blockedByTileLS(i - 1)    || (io.enqRob.hasTileLS    || isTileLS.take(i).reduce(_ || _)) && isLoadStore(i)
+  }
+
+
   // for noSpecExec: (robEmpty || !this.noSpecExec) && !previous.noSpecExec
   // For blockBackward:
   // this instruction can actually dequeue: 3 conditions
   // (1) resources are ready
   // (2) previous instructions are ready
-  thisCanActualOut := VecInit((0 until RenameWidth).map(i => !blockedByWaitForward(i) && notBlockedByPrevious(i) && io.enqRob.canAccept))
+  thisCanActualOut := VecInit((0 until RenameWidth).map(i => 
+    !blockedByWaitForward(i) && !blockedByLoadStore(i) && !blockedByTileLS(i) && notBlockedByPrevious(i) && io.enqRob.canAccept))
   val thisActualOut = (0 until RenameWidth).map(i => io.enqRob.req(i).valid && io.enqRob.canAccept)
 
   // input for ROB, LSQ

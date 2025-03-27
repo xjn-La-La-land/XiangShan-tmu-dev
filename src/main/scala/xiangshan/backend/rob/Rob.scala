@@ -237,7 +237,7 @@ class RobImp(override val wrapper: Rob)(implicit p: Parameters, params: BackendP
   )
   val robDeqGroup = Reg(Vec(bankNum, new RobCommitEntryBundle))
   val rawInfo = VecInit((0 until CommitWidth).map(i => robDeqGroup(deqPtrVec(i).value(bankAddrWidth-1, 0)))).toSeq
-  val commitInfo = VecInit((0 until CommitWidth).map(i => robDeqGroup(deqPtrVec(i).value(bankAddrWidth-1,0)))).toSeq
+  val commitInfo = VecInit((0 until CommitWidth).map(i => robDeqGroup(deqPtrVec(i).value(bankAddrWidth-1, 0)))).toSeq
   val walkInfo = VecInit((0 until CommitWidth).map(i => robDeqGroup(walkPtrVec(i).value(bankAddrWidth-1, 0)))).toSeq
   for (i <- 0 until CommitWidth) {
     connectCommitEntry(robDeqGroup(i), robBanksRdataThisLineUpdate(i))
@@ -266,6 +266,8 @@ class RobImp(override val wrapper: Rob)(implicit p: Parameters, params: BackendP
   val debug_lsIssued = RegInit(VecInit.fill(RobSize)(false.B))
 
   val isEmpty = enqPtr === deqPtr
+  val hasLoadStore = robEntries.map(e => e.valid && CommitType.isLoadStore(e.commitType)).reduce(_ || _)
+  val hasTileLS    = robEntries.map(e => e.valid && CommitType.isTileLS(e.commitType)).reduce(_ || _)
   val snptEnq = io.enq.canAccept && io.enq.req.map(x => x.valid && x.bits.snapshot).reduce(_ || _)
   val snapshotPtrVec = Wire(Vec(CommitWidth, new RobPtr))
   snapshotPtrVec(0) := io.enq.req(0).bits.robIdx
@@ -454,6 +456,10 @@ class RobImp(override val wrapper: Rob)(implicit p: Parameters, params: BackendP
 
   val dispatchNum = Mux(io.enq.canAccept, PopCount(io.enq.req.map(req => req.valid && req.bits.firstUop)), 0.U)
   io.enq.isEmpty := RegNext(isEmpty && !VecInit(io.enq.req.map(_.valid)).asUInt.orR)
+  // io.enq.hasLoadStore := RegNext(hasLoadStore || VecInit(io.enq.req.map(e => e.valid && CommitType.isLoadStore(e.bits.commitType))).asUInt.orR)
+  // io.enq.hasTileLS    := RegNext(hasTileLS    || VecInit(io.enq.req.map(e => e.valid && CommitType.isTileLS(e.bits.commitType))).asUInt.orR)
+  io.enq.hasLoadStore := hasLoadStore
+  io.enq.hasTileLS    := hasTileLS
 
   when(!io.wfi_enable) {
     hasWFI := false.B
