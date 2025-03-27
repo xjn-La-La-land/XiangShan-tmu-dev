@@ -792,15 +792,30 @@ class int8DP4A extends Module {
   val a_sign = io.func(1) === "b1".U
   val b_sign = io.func(0) === "b1".U
 
-  val c_vec = io.a_vec.zip(io.b_vec).map { case(a, b) =>
-    val muli8i8i32 = Module(new WTMulUnit(8+1))
-    muli8i8i32.io.a := Mux(a_sign, SignExt(a, 9), ZeroExt(a, 9))
-    muli8i8i32.io.b := Mux(b_sign, SignExt(b, 9), ZeroExt(b, 9))
-    muli8i8i32.io.c
-  }
+  // val c_vec = io.a_vec.zip(io.b_vec).map { case(a, b) =>
+  //   val muli8i8i32 = Module(new WTMulUnit(8+1))
+  //   muli8i8i32.io.a := Mux(a_sign, SignExt(a, 9), ZeroExt(a, 9))
+  //   muli8i8i32.io.b := Mux(b_sign, SignExt(b, 9), ZeroExt(b, 9))
+  //   muli8i8i32.io.c
+  // }
 
-  val dp = ParallelSingedExpandingAdd(c_vec.map(_.asSInt))
-  io.c_out := io.c_in + SignExt(dp.asUInt, 32)
+  // val dp = ParallelSingedExpandingAdd(c_vec.map(_.asSInt))
+  // io.c_out := io.c_in + SignExt(dp.asUInt, 32)
+
+  // the following rough implementation is for faster compilation
+  val a_vec_widen = io.a_vec.map(a => Mux(a_sign, SignExt(a, 32), ZeroExt(a, 32)))
+  val b_vec_widen = io.b_vec.map(b => Mux(b_sign, SignExt(b, 32), ZeroExt(b, 32)))
+
+  val dp = a_vec_widen.zip(b_vec_widen).map { case(a, b) =>
+    LookupTreeDefault(io.func, 0.U, Seq(
+      (TMUOpType.tdpbss, (a.asSInt * b.asSInt).asUInt),
+      (TMUOpType.tdpbsu, (a.asSInt * b.asUInt).asUInt),
+      (TMUOpType.tdpbus, (a.asUInt * b.asSInt).asUInt),
+      (TMUOpType.tdpbuu, (a.asUInt * b.asUInt).asUInt))
+    )
+  }.reduce(_ + _)
+
+  io.c_out := io.c_in + dp
 }
 
 case class DPAUnit(data_typ: String = "int8") {

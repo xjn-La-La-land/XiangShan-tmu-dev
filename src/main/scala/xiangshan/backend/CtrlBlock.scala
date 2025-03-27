@@ -689,6 +689,8 @@ class CtrlBlockImp(
   enqRob.canAccept := rob.io.enq.canAccept
   enqRob.canAcceptForDispatch := rob.io.enq.canAcceptForDispatch
   enqRob.isEmpty := rob.io.enq.isEmpty
+  enqRob.hasLoadStore := rob.io.enq.hasLoadStore
+  enqRob.hasTileLS    := rob.io.enq.hasTileLS
   enqRob.resp := rob.io.enq.resp
   enqRob.needAlloc := RegNext(dispatch.io.enqRob.needAlloc)
   enqRob.req.zip(dispatch.io.enqRob.req).map { case (sink, source) =>
