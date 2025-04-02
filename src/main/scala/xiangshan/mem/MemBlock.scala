@@ -91,7 +91,8 @@ class ooo_to_mem(implicit p: Parameters) extends MemBlockBundle {
   val loadFastImm = Vec(LdExuCnt, Input(UInt(12.W)))
   val sfence = Input(new SfenceBundle)
   val tlbCsr = Input(new TlbCsrBundle)
-  val tmuTlb = Flipped(new TlbRequestIO()) // for tmu 
+  val tmuTlb = Flipped(new TlbRequestIO()) // for tmu
+  val tmuSbuffer = Vec(EnsbufferWidth, Flipped(Decoupled(new DCacheWordReqWithVaddrAndPfFlag))) 
   val lsqio = new Bundle {
     val lcommit = Input(UInt(log2Up(CommitWidth + 1).W))
     val scommit = Input(UInt(log2Up(CommitWidth + 1).W))
@@ -1463,12 +1464,25 @@ class MemBlockInlinedImp(outer: MemBlockInlined) extends LazyModuleImp(outer)
   lsq.io.tl_d_channel <> dcache.io.lsu.tl_d_channel
 
   // LSQ to store buffer
-  lsq.io.sbuffer        <> sbuffer.io.in
-  sbuffer.io.in(0).valid := lsq.io.sbuffer(0).valid || vSegmentUnit.io.sbuffer.valid
-  sbuffer.io.in(0).bits  := Mux1H(Seq(
-    vSegmentUnit.io.sbuffer.valid -> vSegmentUnit.io.sbuffer.bits,
-    lsq.io.sbuffer(0).valid       -> lsq.io.sbuffer(0).bits
-  ))
+  // 对 lsq.io.sbuffer 与 tmu.io.sbuffer 进行仲裁
+  // 当 lsq 排空时，说明没有 load/store 指令需要与 sbuffer 交互，此时将 tmu.io.sbuffer 接入 sbuffer
+  val lsq_empty = lsq.io.lqEmpty && lsq.io.sqEmpty
+
+  lsq.io.sbuffer <> DontCare
+  io.ooo_to_mem.tmuSbuffer <> DontCare
+  io.ooo_to_mem.tmuSbuffer.foreach { _.ready := false.B }
+  lsq.io.sbuffer.foreach { _.ready := false.B }
+
+  when(!lsq_empty) {
+    lsq.io.sbuffer        <> sbuffer.io.in
+    sbuffer.io.in(0).valid := lsq.io.sbuffer(0).valid || vSegmentUnit.io.sbuffer.valid
+    sbuffer.io.in(0).bits  := Mux1H(Seq(
+      vSegmentUnit.io.sbuffer.valid -> vSegmentUnit.io.sbuffer.bits,
+      lsq.io.sbuffer(0).valid       -> lsq.io.sbuffer(0).bits
+    ))
+  }.otherwise {
+    io.ooo_to_mem.tmuSbuffer <> sbuffer.io.in
+  }
   vSegmentUnit.io.sbuffer.ready := sbuffer.io.in(0).ready
   lsq.io.sqEmpty        <> sbuffer.io.sqempty
   dcache.io.force_write := lsq.io.force_write

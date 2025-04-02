@@ -15,6 +15,7 @@ import xiangshan.ExceptionNO.illegalInstr
 import xiangshan.backend.fu.vector.Bundles.VType
 import xiangshan.backend.fu.wrapper.{CSRInput, CSRToDecode}
 import xiangshan.cache.mmu.TlbRequestIO
+import xiangshan.cache.DCacheWordReqWithVaddrAndPfFlag
 
 class FuncUnitCtrlInput(cfg: FuConfig)(implicit p: Parameters) extends XSBundle {
   val fuOpType    = FuOpType()
@@ -103,6 +104,7 @@ class FuncUnitIO(cfg: FuConfig)(implicit p: Parameters) extends XSBundle with Tm
 
   val tmuTlb    = OptionWrapper(cfg.isTmu, new TlbRequestIO())
   val tmuMemBus = OptionWrapper(cfg.isTmu, new TmuMemBus)
+  val tmuSbuffer = OptionWrapper(cfg.isTmu, Vec(EnsbufferWidth, Decoupled(new DCacheWordReqWithVaddrAndPfFlag)))
 }
 
 abstract class FuncUnit(val cfg: FuConfig)(implicit p: Parameters) extends XSModule with HasCriticalErrors {

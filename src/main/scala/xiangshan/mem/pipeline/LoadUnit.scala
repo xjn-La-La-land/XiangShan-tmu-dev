@@ -663,6 +663,7 @@ class LoadUnit(implicit p: Parameters) extends XSModule
   // set default
   val s0_src_selector = WireInit(s0_src_valid_vec)
   if (!EnableLoadToLoadForward) { s0_src_selector(l2l_fwd_idx) := false.B }
+  // 仲裁
   val s0_src_format = Seq(
     fromMisAlignBufferSource(io.misalign_ldin.bits),
     fromNormalReplaySource(io.replay.bits),

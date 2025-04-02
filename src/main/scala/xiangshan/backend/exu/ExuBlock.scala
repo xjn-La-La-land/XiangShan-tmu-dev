@@ -16,6 +16,7 @@ import xiangshan.backend.fu.wrapper.{CSRInput, CSRToDecode}
 import xiangshan.cache.mmu.TlbRequestIO
 import freechips.rocketchip.tilelink.TLClientNode
 import xiangshan.backend.fu.{TmuParams,TmuMemBus}
+import xiangshan.cache.DCacheWordReqWithVaddrAndPfFlag
 
 class ExuBlock(params: SchdBlockParams)(implicit p: Parameters) extends LazyModule with HasXSParameter {
   override def shouldBeInlined: Boolean = false
@@ -58,6 +59,7 @@ class ExuBlockImp(
     // tmu memory io connection
     exu.io.tmuTlb.foreach(exuio => io.tmuTlb.get <> exuio)
     exu.io.tmuMemBus.foreach(exuio => io.tmuMemBus.get <> exuio)
+    exu.io.tmuSbuffer.foreach(exuio => io.tmuSbuffer.get <> exuio)
 
     XSPerfAccumulate(s"${(exu.wrapper.exuParams.name)}_fire_cnt", PopCount(exu.io.in.fire))
   }
@@ -95,6 +97,7 @@ class ExuBlockIO(implicit p: Parameters, params: SchdBlockParams) extends XSBund
   val vlIsVlmax = Option.when(params.writeVConfig)(Output(Bool()))
 
   // tmu memory io
-  val tmuTlb    = Option.when(params.hasTmu)(new TlbRequestIO())
-  val tmuMemBus = Option.when(params.hasTmu)(new TmuMemBus)
+  val tmuTlb     = Option.when(params.hasTmu)(new TlbRequestIO())
+  val tmuMemBus  = Option.when(params.hasTmu)(new TmuMemBus)
+  val tmuSbuffer = Option.when(params.hasTmu)(Vec(EnsbufferWidth, Decoupled(new DCacheWordReqWithVaddrAndPfFlag)))
 }
