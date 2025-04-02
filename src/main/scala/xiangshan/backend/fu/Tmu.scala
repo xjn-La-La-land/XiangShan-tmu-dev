@@ -61,8 +61,8 @@ class TmuDataInput(implicit p: Parameters) extends XSBundle with TmuParams {
   val func   = FuOpType()
   val robIdx = new RobPtr
 
-  def isTileLS: Bool = isTileLS(func)
-  def isTdp:    Bool = isTdp(func)
+  def isTileLS: Bool = TMUOpType.isTileLS(func)
+  def isTdp:    Bool = TMUOpType.isTdp(func)
   def isWrite:  Bool = func(1)
 
   def TdpOp: UInt = func(1, 0)

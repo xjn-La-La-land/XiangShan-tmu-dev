@@ -955,7 +955,7 @@ class DecodeUnit(implicit p: Parameters) extends XSModule with DecodeUnitConstan
   private val isAMO = FuType.isAMO(decodedInst.fuType)
   private val isVStore = FuType.isVStore(decodedInst.fuType)
   private val isBranch = !decodedInst.preDecodeInfo.notCFI || FuType.isJump(decodedInst.fuType)
-  private val isTileLS = FuType.isTmu(decodedInst.fuType) && TMUOpType.isLoadStore(decodedInst.fuOpType)
+  private val isTileLS = FuType.isTmu(decodedInst.fuType) && TMUOpType.isTileLS(decodedInst.fuOpType)
 
   decodedInst.commitType := Cat(isTileLS, 0.U(1.W), isLs | isVls, (isStore && !isAMO) | isVStore | isBranch)
 

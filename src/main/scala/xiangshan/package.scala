@@ -395,7 +395,7 @@ package object xiangshan {
     def tdpbuu    = "b000".U
 
     def isTdp(func: UInt) = func(2) === "b0".U
-    def isLoadStore(func: UInt) = func(2) === "b1".U
+    def isTileLS(func: UInt) = func(2) === "b1".U
   }
 
   object VSETOpType {
