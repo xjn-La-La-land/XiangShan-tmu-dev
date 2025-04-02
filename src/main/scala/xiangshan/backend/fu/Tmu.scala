@@ -686,8 +686,9 @@ class TileLSUnit (implicit p: Parameters) extends XSModule with TileLSUnitParams
   val tilesRdata_vec  = Wire(Vec(sbufNumEnq, Vec(EnsbufferWidth, UInt(VLEN.W))))
   for (i <- 0 until sbufNumEnq) {
     for (j <- 0 until EnsbufferWidth) {
-      addr_offset_vec(i)(j) := Cat((i+j).U, 0.U(log2Ceil(VLEN).W))
-      tilesRdata_vec(i)(j)  := io.tileData.tmmRead.rdata((i+j)*VLEN, (i+j+1)*VLEN-1)
+      var k = i * EnsbufferWidth + j
+      addr_offset_vec(i)(j) := Cat(k.U, 0.U(log2Ceil(VLEN).W))
+      tilesRdata_vec(i)(j)  := io.tileData.tmmRead.rdata((k+1)*VLEN-1, k*VLEN)
     }
   }
   for (i <- 0 until EnsbufferWidth) {
