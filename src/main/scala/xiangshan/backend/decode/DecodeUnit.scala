@@ -573,12 +573,14 @@ object XtmDecode extends DecodeConstants {
   override val decodeArray: Array[(BitPat, XSDecodeBase)] = Array(
     // TILELOADD  -> XSDecode(SrcType.reg, SrcType.reg, SrcType.X, FuType.tmu, TMUOpType.tileload,  SelImm.IMM_S, noSpec = T, blockBack = T),
     // TILESTORED -> XSDecode(SrcType.reg, SrcType.reg, SrcType.X, FuType.tmu, TMUOpType.tilestore, SelImm.IMM_S, noSpec = T, blockBack = T),
-    TILELOADD  -> XSDecode(SrcType.reg, SrcType.reg, SrcType.X, FuType.tmu, TMUOpType.tileload,  SelImm.IMM_S),
-    TILESTORED -> XSDecode(SrcType.reg, SrcType.reg, SrcType.X, FuType.tmu, TMUOpType.tilestore, SelImm.IMM_S),
-    TDPBSSD    -> XSDecode(SrcType.reg, SrcType.reg, SrcType.X, FuType.tmu, TMUOpType.tdpbss,    SelImm.IMM_S),
-    TDPBSUD    -> XSDecode(SrcType.X  , SrcType.X  , SrcType.X, FuType.tmu, TMUOpType.tdpbsu,    SelImm.IMM_S),
-    TDPBUSD    -> XSDecode(SrcType.X  , SrcType.X  , SrcType.X, FuType.tmu, TMUOpType.tdpbus,    SelImm.IMM_S),
-    TDPBUUD    -> XSDecode(SrcType.X  , SrcType.X  , SrcType.X, FuType.tmu, TMUOpType.tdpbuu,    SelImm.IMM_S),
+    TILELOADD   -> XSDecode(SrcType.reg, SrcType.reg, SrcType.X, FuType.tmu, TMUOpType.tileload,   SelImm.IMM_S),
+    TILELOADDT1 -> XSDecode(SrcType.reg, SrcType.reg, SrcType.X, FuType.tmu, TMUOpType.tileloadt1, SelImm.IMM_S),
+    TILESTORED  -> XSDecode(SrcType.reg, SrcType.reg, SrcType.X, FuType.tmu, TMUOpType.tilestore,  SelImm.IMM_S),
+
+    TDPBSSD     -> XSDecode(SrcType.reg, SrcType.reg, SrcType.X, FuType.tmu, TMUOpType.tdpbss,     SelImm.IMM_S),
+    TDPBSUD     -> XSDecode(SrcType.X  , SrcType.X  , SrcType.X, FuType.tmu, TMUOpType.tdpbsu,     SelImm.IMM_S),
+    TDPBUSD     -> XSDecode(SrcType.X  , SrcType.X  , SrcType.X, FuType.tmu, TMUOpType.tdpbus,     SelImm.IMM_S),
+    TDPBUUD     -> XSDecode(SrcType.X  , SrcType.X  , SrcType.X, FuType.tmu, TMUOpType.tdpbuu,     SelImm.IMM_S),
   )
 }
 

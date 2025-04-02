@@ -574,13 +574,13 @@ class TileLSUnit (implicit p: Parameters) extends XSModule with TileLSUnitParams
   val tls_buf_valid = RegInit(false.B)
   val lsq_enq_cnt = RegInit(0.U(row_idx_w.W))
 
+  val enq_enable = !isFull(in_ptr, out_ptr) && tls_buf_valid
   when(io.tls_in.fire) {
     tls_buf_valid := true.B
   }.elsewhen(enq_enable && lsq_enq_cnt === (numTrows - 1).U){
     tls_buf_valid := false.B
   }
   
-  val enq_enable = !isFull(in_ptr, out_ptr) && tls_buf_valid
   when(enq_enable) {
     lsq_enq_cnt := lsq_enq_cnt + 1.U
   }
