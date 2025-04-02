@@ -459,6 +459,7 @@ class TDPUnit(implicit p: Parameters) extends XSModule with TDPUnitParams {
   io.tileData.tmmCWrite.wen   := s2_wen.asUInt.orR
   io.tileData.tmmCWrite.wtile := s2_info.regs.tmmC
   io.tileData.tmmCWrite.wrow  := s2_row_walk_ptr.value
+  io.tileData.tmmCWrite.wdata := DPAMatrixPop
 
   s0_stall := s0_ren.zip(s1_ren).map(r => r._1 && r._2).reduce(_ || _) || // s0 and s1 read the same tile
               s0_ren.zip(s2_wen).map(r => r._1 && r._2).reduce(_ || _)    // s0 read and s2 write the same tile
