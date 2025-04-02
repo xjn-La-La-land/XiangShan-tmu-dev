@@ -249,20 +249,22 @@ class TmuModule (implicit p: Parameters) extends XSModule with TmuParams with Ha
     tdpUnit.io.tileData.tmmBRead,
     tdpUnit.io.tileData.tmmCRead,
   )
+  val readPortsUnflipped = readPorts.map(port => WireDefault(port))
   val writePorts = Seq(
     tlsUnit.io.tileData.tmmWrite,
     tdpUnit.io.tileData.tmmCWrite,
   )
+  val writePortsUnflipped = writePorts.map(port => WireDefault(port))
 
   // connect to tiles
   for (i <- 0 until numTmm) {
-    val firstReadPort = PriorityMux(readPorts.map(readPort => {
+    val firstReadPort = PriorityMux(readPortsUnflipped.map(readPort => {
       (readPort.rtile === i.U && readPort.ren) -> readPort
     }))
     tiles(i).io.ren  := firstReadPort.ren
     tiles(i).io.rrow := firstReadPort.rrow
 
-    val firstWritePort = PriorityMux(writePorts.map(writePort => {
+    val firstWritePort = PriorityMux(writePortsUnflipped.map(writePort => {
       (writePort.wtile === i.U && writePort.wen) -> writePort
     }))
     tiles(i).io.wen   := firstWritePort.wen
