@@ -86,7 +86,19 @@ class TilesReadPort (implicit p: Parameters) extends XSBundle with TmuParams {
   val ren   = Output(Bool())
   val rtile = Output(UInt(tile_idx_w.W))
   val rrow  = Output(UInt(row_idx_w.W))
-  val rdata = Input(UInt(row_data_w.W))
+  val rdata = Input(UInt(row_data_w.W)) // 1 cycle latency
+
+  def toInBundle = {
+    val inBundle = Wire(new Bundle {
+      val ren   = Bool()
+      val rtile = UInt(tile_idx_w.W)
+      val rrow  = UInt(row_idx_w.W)
+    })
+    inBundle.ren   := ren
+    inBundle.rtile := rtile
+    inBundle.rrow  := rrow
+    inBundle
+  }
 }
 
 class TilesWritePort (implicit p: Parameters) extends XSBundle with TmuParams {
@@ -205,10 +217,12 @@ class TmuModule (implicit p: Parameters) extends XSModule with TmuParams with Ha
   val enq_ptr = RegInit(0.U.asTypeOf(new instInfoBufPtr))
   val deq_ptr = RegInit(0.U.asTypeOf(new instInfoBufPtr))
   val instInfoBufFull = isFull(enq_ptr, deq_ptr)
+  val instInfoBufEmpty = isEmpty(enq_ptr, deq_ptr)
 
+  // tdp指令和tilels指令相互阻塞，避免数据冲突
   io.in.ready := !instInfoBufFull &&
-                 (io.in.bits.isTdp && tdpUnit.io.tdpin.ready ||
-                  io.in.bits.isTileLS && tlsUnit.io.tls_in.ready)
+                 (io.in.bits.isTdp && tdpUnit.io.tdpin.ready && tlsUnit.io.empty ||
+                  io.in.bits.isTileLS && tlsUnit.io.tls_in.ready && tdpUnit.io.empty)
   when(io.in.fire) {
     instInfoBuf(enq_ptr.value).robIdx := io.in.bits.robIdx
     instInfoBuf(enq_ptr.value).isTdp  := io.in.bits.isTdp
@@ -219,7 +233,7 @@ class TmuModule (implicit p: Parameters) extends XSModule with TmuParams with Ha
   when(tdpUnit.io.tdpout.fire || tlsUnit.io.tls_out.fire) {
     instInfoBuf(deq_ptr.value).ready_go := true.B
   }
-  io.out.valid       := instInfoBuf(deq_ptr.value).ready_go
+  io.out.valid       := !instInfoBufEmpty && instInfoBuf(deq_ptr.value).ready_go
   io.out.bits.robIdx := instInfoBuf(deq_ptr.value).robIdx
   when(io.out.fire) {
     deq_ptr := deq_ptr + 1.U
@@ -256,11 +270,11 @@ class TmuModule (implicit p: Parameters) extends XSModule with TmuParams with Ha
 
   // connect to tiles
   for (i <- 0 until numTmm) {
-    tiles(i).io.ren  := readPorts.map(readPort => {
-      (readPort.rtile === i.U && readPort.ren) }).reduce(_ || _)
-    tiles(i).io.rrow := PriorityMux(readPorts.map(readPort => {
-      (readPort.rtile === i.U && readPort.ren) -> readPort.rrow
+    val firstReadPort = PriorityMux(readPorts.map(readPort => {
+      (readPort.rtile === i.U && readPort.ren) -> readPort.toInBundle
     }))
+    tiles(i).io.ren   := firstReadPort.ren
+    tiles(i).io.rrow  := firstReadPort.rrow
 
     val firstWritePort = PriorityMux(writePorts.map(writePort => {
       (writePort.wtile === i.U && writePort.wen) -> writePort
@@ -269,6 +283,7 @@ class TmuModule (implicit p: Parameters) extends XSModule with TmuParams with Ha
     tiles(i).io.wrow  := firstWritePort.wrow
     tiles(i).io.wdata := firstWritePort.wdata
   }
+  
   readPorts.foreach(readPort => {
     readPort.rdata := tiles_rdatas(readPort.rtile)
   })
@@ -329,6 +344,7 @@ class TDPUnit(implicit p: Parameters) extends XSModule with TDPUnitParams {
     val tdpin  = Flipped(Decoupled(new TDPUnitInput))
     val tdpout = Decoupled(new Bundle{})
     val tileData = new TDPUnitToTiles
+    val empty  = Output(Bool())
   })
 
   // registers for tdp operation
@@ -464,6 +480,8 @@ class TDPUnit(implicit p: Parameters) extends XSModule with TDPUnitParams {
   s0_stall := s0_ren.zip(s1_ren).map(r => r._1 && r._2).reduce(_ || _) || // s0 and s1 read the same tile
               s0_ren.zip(s2_wen).map(r => r._1 && r._2).reduce(_ || _)    // s0 read and s2 write the same tile
   s1_stall := s1_ren.zip(s2_wen).map(r => r._1 && r._2).reduce(_ || _)    // s1 read and s2 write the same tile
+
+  io.empty := !s0_info.valid && !s1_info.valid && !s2_info.valid
 }
 
 
@@ -540,6 +558,8 @@ class TileLSUnit (implicit p: Parameters) extends XSModule with TileLSUnitParams
     // val pmp  = Flipped(new PMPRespBundle()) // pmp check not yet implemented
     val memBus = new TmuMemBus
     val sbuffer = Vec(EnsbufferWidth, Decoupled(new DCacheWordReqWithVaddrAndPfFlag))
+
+    val empty = Output(Bool())
   })
   
   // queues
@@ -766,6 +786,8 @@ class TileLSUnit (implicit p: Parameters) extends XSModule with TileLSUnitParams
       }
     }
   }
+
+  io.empty := isEmpty(in_ptr, out_ptr) && !tls_buf_valid
 }
 
 //////////////////////////////////////
