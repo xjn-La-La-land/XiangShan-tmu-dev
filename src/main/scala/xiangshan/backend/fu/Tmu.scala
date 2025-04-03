@@ -706,6 +706,12 @@ class TileLSUnit (implicit p: Parameters) extends XSModule with TileLSUnitParams
     io.sbuffer(i).bits.sqNeedDeq := false.B
   }
 
+  for (i <- 0 until EnsbufferWidth) {
+    when(io.sbuffer(i).fire) {
+      sbufEnq_cnt(i).update()
+    }
+  }
+
   val sbufEnqDoneFlag = Seq.fill(EnsbufferWidth)(RegInit(false.B))
   val sbufEnqDone = sbufEnqDoneFlag.reduce(_ && _)
   for (i <- 0 until EnsbufferWidth) {
