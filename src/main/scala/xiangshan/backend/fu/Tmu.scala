@@ -703,6 +703,7 @@ class TileLSUnit (implicit p: Parameters) extends XSModule with TileLSUnitParams
   }.reduce(_ || _) // load to store check!
 
   val sbufEnq_cnt = Seq.fill(EnsbufferWidth)(DataTransCnt(sbufNumEnq))
+  val sbufEnqDoneFlag = Seq.fill(EnsbufferWidth)(RegInit(false.B))
   val addr_offset_vec = Wire(Vec(sbufNumEnq, Vec(EnsbufferWidth, UInt(PAddrBits.W))))
   val tilesRdata_vec  = Wire(Vec(sbufNumEnq, Vec(EnsbufferWidth, UInt(VLEN.W))))
   for (i <- 0 until sbufNumEnq) {
@@ -712,6 +713,7 @@ class TileLSUnit (implicit p: Parameters) extends XSModule with TileLSUnitParams
       tilesRdata_vec(i)(j)  := io.tileData.tmmRead.rdata((k+1)*VLEN-1, k*VLEN)
     }
   }
+
   for (i <- 0 until EnsbufferWidth) {
     io.sbuffer(i).valid := mem_entry.sbufReqValid && tilesRdataValid && !sbufEnqDoneFlag(i)
     io.sbuffer(i).bits       := DontCare
@@ -732,7 +734,6 @@ class TileLSUnit (implicit p: Parameters) extends XSModule with TileLSUnitParams
     }
   }
 
-  val sbufEnqDoneFlag = Seq.fill(EnsbufferWidth)(RegInit(false.B))
   val sbufEnqDone = (0 until EnsbufferWidth).map { i =>
     sbufEnqDoneFlag(i) || io.sbuffer(i).fire && sbufEnq_cnt(i).last
   }.reduce(_ && _)
