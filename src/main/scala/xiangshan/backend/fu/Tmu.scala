@@ -713,7 +713,7 @@ class TileLSUnit (implicit p: Parameters) extends XSModule with TileLSUnitParams
     }
   }
   for (i <- 0 until EnsbufferWidth) {
-    io.sbuffer(i).valid := mem_entry.sbufReqValid && tilesRdataValid
+    io.sbuffer(i).valid := mem_entry.sbufReqValid && tilesRdataValid && !sbufEnqDoneFlag(i)
     io.sbuffer(i).bits       := DontCare
     io.sbuffer(i).bits.cmd   := MemoryOpConstants.M_XWR
     io.sbuffer(i).bits.addr  := mem_entry.paddr + addr_offset_vec(sbufEnq_cnt(i).value)(i)
@@ -733,7 +733,9 @@ class TileLSUnit (implicit p: Parameters) extends XSModule with TileLSUnitParams
   }
 
   val sbufEnqDoneFlag = Seq.fill(EnsbufferWidth)(RegInit(false.B))
-  val sbufEnqDone = sbufEnqDoneFlag.reduce(_ && _)
+  val sbufEnqDone = (0 until EnsbufferWidth).map { i =>
+    sbufEnqDoneFlag(i) || io.sbuffer(i).fire && sbufEnq_cnt(i).last
+  }.reduce(_ && _)
   for (i <- 0 until EnsbufferWidth) {
     when(sbufEnqDone) {
       sbufEnqDoneFlag(i) := false.B
