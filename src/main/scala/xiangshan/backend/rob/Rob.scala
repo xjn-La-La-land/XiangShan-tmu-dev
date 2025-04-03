@@ -456,10 +456,10 @@ class RobImp(override val wrapper: Rob)(implicit p: Parameters, params: BackendP
 
   val dispatchNum = Mux(io.enq.canAccept, PopCount(io.enq.req.map(req => req.valid && req.bits.firstUop)), 0.U)
   io.enq.isEmpty := RegNext(isEmpty && !VecInit(io.enq.req.map(_.valid)).asUInt.orR)
-  // io.enq.hasLoadStore := RegNext(hasLoadStore || VecInit(io.enq.req.map(e => e.valid && CommitType.isLoadStore(e.bits.commitType))).asUInt.orR)
-  // io.enq.hasTileLS    := RegNext(hasTileLS    || VecInit(io.enq.req.map(e => e.valid && CommitType.isTileLS(e.bits.commitType))).asUInt.orR)
-  io.enq.hasLoadStore := hasLoadStore
-  io.enq.hasTileLS    := hasTileLS
+  io.enq.hasLoadStore := RegNext(hasLoadStore || VecInit(io.enq.req.map(e => e.valid && CommitType.isLoadStore(e.bits.commitType))).asUInt.orR)
+  io.enq.hasTileLS    := RegNext(hasTileLS    || VecInit(io.enq.req.map(e => e.valid && CommitType.isTileLS(e.bits.commitType))).asUInt.orR)
+  // io.enq.hasLoadStore := hasLoadStore
+  // io.enq.hasTileLS    := hasTileLS
 
   when(!io.wfi_enable) {
     hasWFI := false.B

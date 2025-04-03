@@ -838,6 +838,11 @@ class NewDispatch(implicit p: Parameters) extends XSModule with HasPerfEvents wi
     blockedByTileLS(i)    := blockedByTileLS(i - 1)    || (io.enqRob.hasTileLS    || isTileLS.take(i).reduce(_ || _)) && isLoadStore(i)
   }
 
+  if(backendParams.debugEn){
+    dontTouch(blockedByLoadStore)
+    dontTouch(blockedByTileLS)
+  }
+
 
   // for noSpecExec: (robEmpty || !this.noSpecExec) && !previous.noSpecExec
   // For blockBackward:
