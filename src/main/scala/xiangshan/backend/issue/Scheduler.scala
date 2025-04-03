@@ -61,6 +61,7 @@ class SchedulerIO()(implicit params: SchdBlockParams, p: Parameters) extends XSB
   }
   val wbFuBusyTable = MixedVec(params.issueBlockParams.map(x => Output(x.genWbFuBusyTableWriteBundle)))
   val IQValidNumVec = Output(Vec(IssueQueueDeqSum, UInt((maxIQSize).U.getWidth.W)))
+  val IQHasXtmVec   = Output(Vec(allIssueParams.size, Bool()))
 
   val fromCtrlBlock = new Bundle {
     val flush = Flipped(ValidIO(new Redirect))
@@ -164,6 +165,9 @@ abstract class SchedulerImpBase(wrapper: Scheduler)(implicit params: SchdBlockPa
   val issueQueues: Seq[IssueQueueImp] = wrapper.issueQueue.map(_.module)
 
   io.IQValidNumVec := issueQueues.filter(_.params.StdCnt == 0).map(_.io.validCntDeqVec).flatten
+  io.IQHasXtmVec   := issueQueues.filter(_.params.StdCnt == 0).map(iq => {
+    iq.io.status.hasXtm.getOrElse(false.B)
+  })
   val wakeupFromIntWBVec = Wire(params.genIntWBWakeUpSinkValidBundle)
   val wakeupFromFpWBVec = Wire(params.genFpWBWakeUpSinkValidBundle)
   val wakeupFromVfWBVec = Wire(params.genVfWBWakeUpSinkValidBundle)

@@ -283,6 +283,7 @@ class BackendInlinedImp(override val wrapper: BackendInlined)(implicit p: Parame
   ctrlBlock.io.toDispatch.wakeUpVec := vfScheduler.io.toSchedulers.wakeupVec
   ctrlBlock.io.toDispatch.wakeUpMem := memScheduler.io.toSchedulers.wakeupVec
   ctrlBlock.io.toDispatch.IQValidNumVec := intScheduler.io.IQValidNumVec ++ fpScheduler.io.IQValidNumVec ++ vfScheduler.io.IQValidNumVec ++ memScheduler.io.IQValidNumVec
+  ctrlBlock.io.toDispatch.IQHasXtmVec   := intScheduler.io.IQHasXtmVec ++ fpScheduler.io.IQHasXtmVec ++ vfScheduler.io.IQHasXtmVec ++ memScheduler.io.IQHasXtmVec
   ctrlBlock.io.toDispatch.ldCancel := io.mem.ldCancel
   ctrlBlock.io.toDispatch.og0Cancel := og0Cancel
   ctrlBlock.io.toDispatch.wbPregsInt.zip(wbDataPath.io.toIntPreg).map(x => {

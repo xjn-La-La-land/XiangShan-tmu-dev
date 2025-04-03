@@ -121,6 +121,7 @@ class NewDispatch(implicit p: Parameters) extends XSModule with HasPerfEvents wi
     val enqRob = Flipped(new RobEnqIO)
     // IssueQueues
     val IQValidNumVec = Vec(exuNum, Input(UInt(maxIQSize.U.getWidth.W))) // HINT: 每个issueQueue的有效项数
+    val IQHasXtmVec   = Vec(allIssueParams.size, Input(Bool()))
     val toIssueQueues = Vec(IQEnqSum, DecoupledIO(new DynInst))
     // to busyTable
     // set preg state to ready (write back regfile)
@@ -508,7 +509,16 @@ class NewDispatch(implicit p: Parameters) extends XSModule with HasPerfEvents wi
     result
   }}.transpose
   uopBlockMatrix.zip(uopBlockMatrixForAssign).map(x => x._1 := VecInit(x._2))
-  uopBlockByIQ := uopBlockMatrix.map(_.reduce(_ || _))
+
+  // HINT: 对 Xtm 指令，如果发射队列中已经有了 Xtm 指令，则不允许进入
+  val xtmBlockByIQ = Wire(Vec(renameWidth, Bool()))
+  val isXtm = VecInit(fromRename.map(x => x.valid && FuType.isTmu(x.bits.fuType)))
+  uopSelIQ.zipWithIndex.map{case (selVec, i) => {
+    val IQhasXtm = (0 until issueQueueNum).map(j => selVec(j) && io.IQHasXtmVec(j)).reduce(_ || _)
+    xtmBlockByIQ(i) := IQhasXtm && isXtm(i)
+  }}
+
+  uopBlockByIQ := (uopBlockMatrix.map(_.reduce(_ || _))).zip(xtmBlockByIQ).map{ case (a, b) => a || b }
   io.toIssueQueues.zip(IQSelUop).map(x => {
     x._1.valid := x._2.valid
     x._1.bits := x._2.bits
