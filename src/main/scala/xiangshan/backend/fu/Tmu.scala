@@ -709,7 +709,7 @@ class TileLSUnit (implicit p: Parameters) extends XSModule with TileLSUnitParams
   for (i <- 0 until sbufNumEnq) {
     for (j <- 0 until EnsbufferWidth) {
       var k = i * EnsbufferWidth + j
-      addr_offset_vec(i)(j) := Cat(k.U, 0.U(log2Ceil(VLEN).W))
+      addr_offset_vec(i)(j) := Cat(k.U, 0.U(log2Ceil(VLEN/8).W))
       tilesRdata_vec(i)(j)  := io.tileData.tmmRead.rdata((k+1)*VLEN-1, k*VLEN)
     }
   }
