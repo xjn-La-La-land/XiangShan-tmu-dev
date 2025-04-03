@@ -724,7 +724,7 @@ class TileLSUnit (implicit p: Parameters) extends XSModule with TileLSUnitParams
     io.sbuffer(i).bits.mask  := Fill(VLEN/8, 1.U(1.W))
     io.sbuffer(i).bits.wline := true.B
     io.sbuffer(i).bits.prefetch  := false.B
-    io.sbuffer(i).bits.vecValid  := false.B
+    io.sbuffer(i).bits.vecValid  := true.B
     io.sbuffer(i).bits.sqNeedDeq := false.B
   }
 
