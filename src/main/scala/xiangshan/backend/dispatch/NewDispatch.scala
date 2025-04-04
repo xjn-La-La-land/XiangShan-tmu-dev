@@ -840,7 +840,7 @@ class NewDispatch(implicit p: Parameters) extends XSModule with HasPerfEvents wi
     if (i == 0) {
       xtmBlockByIQ(i) := IQhasXtm && isXtm(i)
     } else {
-      xtmBlockByIQ(i) := IQhasXtm && isXtm(i) || xtmBlockByIQ(i - 1)
+      xtmBlockByIQ(i) := xtmBlockByIQ(i - 1) || (IQhasXtm || isXtm.take(i).reduce(_ || _))  && isXtm(i)
     }
   }}
 
