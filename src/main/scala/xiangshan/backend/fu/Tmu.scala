@@ -240,7 +240,7 @@ class TmuModule (implicit p: Parameters) extends XSModule with TmuParams with Ha
   }
 
   // connect to tdpUnit
-  tdpUnit.io.tdpin.valid := io.in.valid && io.in.bits.isTdp
+  tdpUnit.io.tdpin.valid := io.in.fire && io.in.bits.isTdp
   tdpUnit.io.tdpin.bits.tmmA  := io.in.bits.tmmA
   tdpUnit.io.tdpin.bits.tmmB  := io.in.bits.tmmB
   tdpUnit.io.tdpin.bits.tmmC  := io.in.bits.tmmC
@@ -249,7 +249,7 @@ class TmuModule (implicit p: Parameters) extends XSModule with TmuParams with Ha
   tdpUnit.io.tdpout.ready := instInfoBuf(deq_ptr.value).isTdp && !instInfoBuf(deq_ptr.value).ready_go
   
   // connect to tlsUnit
-  tlsUnit.io.tls_in.valid := io.in.valid && io.in.bits.isTileLS
+  tlsUnit.io.tls_in.valid := io.in.fire && io.in.bits.isTileLS
   tlsUnit.io.tls_in.bits.tmm        := io.in.bits.tmmC
   tlsUnit.io.tls_in.bits.vaddr_base := io.in.bits.vaddr_base
   tlsUnit.io.tls_in.bits.stride     := io.in.bits.stride
