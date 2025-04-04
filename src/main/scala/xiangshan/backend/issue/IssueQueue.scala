@@ -908,7 +908,9 @@ class IssueQueueImp(override val wrapper: IssueQueue)(implicit p: Parameters, va
   io.status.empty := !Cat(validVec).orR
   io.status.full := othersCanotIn
   io.status.validCnt := PopCount(validVec)
-  io.status.hasXtm.get := entries.io.fuType.map { fuType => FuType.isTmu(fuType) }.reduce(_ || _)
+  if(io.status.hasXtm.isDefined) {
+    io.status.hasXtm.get := entries.io.fuType.map { fuType => FuType.isTmu(fuType) }.reduce(_ || _)
+  }
 
   protected def getDeqLat(deqPortIdx: Int, fuType: UInt) : UInt = {
     Mux1H(wakeupFuLatencyMaps(deqPortIdx) map { case (k, v) => (fuType(k.id), v.U) })
