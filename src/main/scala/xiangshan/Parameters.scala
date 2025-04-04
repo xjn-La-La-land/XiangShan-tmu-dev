@@ -88,7 +88,7 @@ case class XSCoreParameters
   EnableLoop: Boolean = true,
   EnableSC: Boolean = true,
   EnbaleTlbDebug: Boolean = false,
-  EnableClockGate: Boolean = true,
+  EnableClockGate: Boolean = false, // close clock gate for now
   EnableJal: Boolean = false,
   EnableFauFTB: Boolean = true,
   EnableSv48: Boolean = true,
