@@ -510,15 +510,7 @@ class NewDispatch(implicit p: Parameters) extends XSModule with HasPerfEvents wi
   }}.transpose
   uopBlockMatrix.zip(uopBlockMatrixForAssign).map(x => x._1 := VecInit(x._2))
 
-  // HINT: 对 Xtm 指令，如果发射队列中已经有了 Xtm 指令，则不允许进入
-  val xtmBlockByIQ = Wire(Vec(renameWidth, Bool()))
-  val isXtm = VecInit(fromRename.map(x => x.valid && FuType.isTmu(x.bits.fuType)))
-  uopSelIQ.zipWithIndex.map{case (selVec, i) => {
-    val IQhasXtm = (0 until issueQueueNum).map(j => selVec(j) && io.IQHasXtmVec(j)).reduce(_ || _)
-    xtmBlockByIQ(i) := IQhasXtm && isXtm(i)
-  }}
-
-  uopBlockByIQ := (uopBlockMatrix.map(_.reduce(_ || _))).zip(xtmBlockByIQ).map{ case (a, b) => a || b }
+  uopBlockByIQ := uopBlockMatrix.map(_.reduce(_ || _))
   io.toIssueQueues.zip(IQSelUop).map(x => {
     x._1.valid := x._2.valid
     x._1.bits := x._2.bits
@@ -745,6 +737,7 @@ class NewDispatch(implicit p: Parameters) extends XSModule with HasPerfEvents wi
   val isAMO    = VecInit(fromRename.map(req => FuType.isAMO(req.bits.fuType)))
   val isBlockBackward  = VecInit(fromRename.map(x => x.valid && x.bits.blockBackward))
   val isWaitForward    = VecInit(fromRename.map(x => x.valid && x.bits.waitForward))
+  val isXtm            = VecInit(fromRename.map(x => x.valid && FuType.isTmu(x.bits.fuType)))
   val isLoadStore      = VecInit(fromRename.map(x => x.valid && CommitType.isLoadStore(x.bits.commitType)))
   val isTileLS         = VecInit(fromRename.map(x => x.valid && CommitType.isTileLS(x.bits.commitType)))
 
@@ -839,17 +832,34 @@ class NewDispatch(implicit p: Parameters) extends XSModule with HasPerfEvents wi
     else Cat((0 until i).map(j => nextCanOut(j))).andR
   ))
 
-  private val blockedByLoadStore = Wire(Vec(RenameWidth, Bool()))
-  private val blockedByTileLS    = Wire(Vec(RenameWidth, Bool()))
-  blockedByLoadStore(0) := io.enqRob.hasLoadStore && isTileLS(0)
-  blockedByTileLS(0)    := io.enqRob.hasTileLS    && isLoadStore(0)
+  // HINT: dispatch级的Xtm指令
+  //       要等 tmu 所在的IQ中没有Xtm指令后才能进入IQ（为了保证Xtm指令之间的顺序执行）
+  val xtmBlockByIQ = Wire(Vec(renameWidth, Bool()))
+  uopSelIQ.zipWithIndex.map{case (selVec, i) => {
+    val IQhasXtm = (0 until issueQueueNum).map(j => selVec(j) && io.IQHasXtmVec(j)).reduce(_ || _)
+    if (i == 0) {
+      xtmBlockByIQ(i) := IQhasXtm && isXtm(i)
+    } else {
+      xtmBlockByIQ(i) := IQhasXtm && isXtm(i) || xtmBlockByIQ(i - 1)
+    }
+  }}
+
+  // HINT: dispatch级的TileLS指令
+  //       要等其他未提交的访存指令提交之后才能进入IQ（为了保证TileLS指令与正常load/store指令之间的顺序访存）
+  private val blockedByNormalLS = Wire(Vec(RenameWidth, Bool()))
+  // HINT: dispatch级的访存指令
+  //       要等未提交的TileLS指令提交之后才能进入IQ（为了保证TileLS指令与正常load/store指令之间的顺序访存）
+  private val blockedByTileLS   = Wire(Vec(RenameWidth, Bool()))
+  blockedByNormalLS(0) := io.enqRob.hasLoadStore && isTileLS(0)
+  blockedByTileLS(0)   := io.enqRob.hasTileLS    && isLoadStore(0)
   for (i <- 1 until RenameWidth) {
-    blockedByLoadStore(i) := blockedByLoadStore(i - 1) || (io.enqRob.hasLoadStore || isLoadStore.take(i).reduce(_ || _)) && isTileLS(i)
-    blockedByTileLS(i)    := blockedByTileLS(i - 1)    || (io.enqRob.hasTileLS    || isTileLS.take(i).reduce(_ || _)) && isLoadStore(i)
+    blockedByNormalLS(i) := blockedByNormalLS(i - 1) || (io.enqRob.hasLoadStore || isLoadStore.take(i).reduce(_ || _)) && isTileLS(i)
+    blockedByTileLS(i)   := blockedByTileLS(i - 1)   || (io.enqRob.hasTileLS    || isTileLS.take(i).reduce(_ || _)) && isLoadStore(i)
   }
 
+
   if(backendParams.debugEn){
-    dontTouch(blockedByLoadStore)
+    dontTouch(blockedByNormalLS)
     dontTouch(blockedByTileLS)
   }
 
@@ -860,7 +870,8 @@ class NewDispatch(implicit p: Parameters) extends XSModule with HasPerfEvents wi
   // (1) resources are ready
   // (2) previous instructions are ready
   thisCanActualOut := VecInit((0 until RenameWidth).map(i => 
-    !blockedByWaitForward(i) && !blockedByLoadStore(i) && !blockedByTileLS(i) && notBlockedByPrevious(i) && io.enqRob.canAccept))
+    !blockedByWaitForward(i) && !xtmBlockByIQ(i) && !blockedByNormalLS(i) && !blockedByTileLS(i) && 
+    notBlockedByPrevious(i) && io.enqRob.canAccept))
   val thisActualOut = (0 until RenameWidth).map(i => io.enqRob.req(i).valid && io.enqRob.canAccept)
 
   // input for ROB, LSQ
