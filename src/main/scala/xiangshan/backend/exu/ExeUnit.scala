@@ -133,7 +133,8 @@ class ExeUnitImp(
   }
 
   val busy = RegInit(false.B)
-  if (exuParams.latencyCertain){
+  // HINT: 对 tmu 所在的 exu，希望指令非阻塞进入
+  if (exuParams.latencyCertain || exuParams.hasTmuFu){
     busy := false.B
   }
   else {

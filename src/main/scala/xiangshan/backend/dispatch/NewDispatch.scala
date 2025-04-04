@@ -859,6 +859,7 @@ class NewDispatch(implicit p: Parameters) extends XSModule with HasPerfEvents wi
 
 
   if(backendParams.debugEn){
+    dontTouch(xtmBlockByIQ)
     dontTouch(blockedByNormalLS)
     dontTouch(blockedByTileLS)
   }

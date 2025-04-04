@@ -846,7 +846,7 @@ object FuConfig {
     srcData = Seq(
       Seq(IntData(), IntData()),
     ), // tileloadd, tilestored need 2 Reg src
-    piped = false,
+    piped = true,
     latency = UncertainLatency(),
     exceptionOut = Seq(), // TODO: add exception
     hasLoadError = false, // TODO: add load error
