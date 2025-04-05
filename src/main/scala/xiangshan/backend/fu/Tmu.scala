@@ -39,7 +39,7 @@ trait TmuParams extends HasXSParameter {
     def reset(): Unit = {
       ptr := 0.U
     }
-    def walk_past(i: Int): Bool = ptr >= i.U
+    def walk_past(i: Int): Bool = value >= i.U
   }
 
   // TileLink clinet node params
@@ -185,6 +185,7 @@ class TmuModule (implicit p: Parameters) extends XSModule with TmuParams with Ha
     val sbuffer = Vec(EnsbufferWidth, Decoupled(new DCacheWordReqWithVaddrAndPfFlag))
   })
 
+  // for debug
   when(io.in.fire) {
     when(io.in.bits.isTileLS && !io.in.bits.isWrite) {
       printf(p"[TMU] tileloadd tmm${io.in.bits.tmmC}, vaddr = 0x${Hexadecimal(io.in.bits.vaddr_base)}, stride = 0x${Hexadecimal(io.in.bits.stride)}\n")
@@ -221,7 +222,7 @@ class TmuModule (implicit p: Parameters) extends XSModule with TmuParams with Ha
 
   // tdp指令和tilels指令相互阻塞，避免数据冲突
   io.in.ready := !instInfoBufFull &&
-                 (io.in.bits.isTdp && tdpUnit.io.tdpin.ready && tlsUnit.io.empty ||
+                 (io.in.bits.isTdp && tdpUnit.io.tdp_in.ready && tlsUnit.io.empty ||
                   io.in.bits.isTileLS && tlsUnit.io.tls_in.ready && tdpUnit.io.empty)
   when(io.in.fire) {
     instInfoBuf(enq_ptr.value).robIdx := io.in.bits.robIdx
@@ -230,7 +231,7 @@ class TmuModule (implicit p: Parameters) extends XSModule with TmuParams with Ha
     enq_ptr := enq_ptr + 1.U
   }
 
-  when(tdpUnit.io.tdpout.fire || tlsUnit.io.tls_out.fire) {
+  when(tdpUnit.io.tdp_out.fire || tlsUnit.io.tls_out.fire) {
     instInfoBuf(deq_ptr.value).ready_go := true.B
   }
   io.out.valid       := !instInfoBufEmpty && instInfoBuf(deq_ptr.value).ready_go
@@ -240,13 +241,13 @@ class TmuModule (implicit p: Parameters) extends XSModule with TmuParams with Ha
   }
 
   // connect to tdpUnit
-  tdpUnit.io.tdpin.valid := io.in.fire && io.in.bits.isTdp
-  tdpUnit.io.tdpin.bits.tmmA  := io.in.bits.tmmA
-  tdpUnit.io.tdpin.bits.tmmB  := io.in.bits.tmmB
-  tdpUnit.io.tdpin.bits.tmmC  := io.in.bits.tmmC
-  tdpUnit.io.tdpin.bits.tdpOp := io.in.bits.TdpOp
+  tdpUnit.io.tdp_in.valid := io.in.fire && io.in.bits.isTdp
+  tdpUnit.io.tdp_in.bits.tmmA  := io.in.bits.tmmA
+  tdpUnit.io.tdp_in.bits.tmmB  := io.in.bits.tmmB
+  tdpUnit.io.tdp_in.bits.tmmC  := io.in.bits.tmmC
+  tdpUnit.io.tdp_in.bits.tdpOp := io.in.bits.TdpOp
 
-  tdpUnit.io.tdpout.ready := instInfoBuf(deq_ptr.value).isTdp && !instInfoBuf(deq_ptr.value).ready_go
+  tdpUnit.io.tdp_out.ready := instInfoBuf(deq_ptr.value).isTdp && !instInfoBuf(deq_ptr.value).ready_go
   
   // connect to tlsUnit
   tlsUnit.io.tls_in.valid := io.in.fire && io.in.bits.isTileLS
@@ -341,8 +342,8 @@ class TDPUnitToTiles(implicit val p: Parameters) extends Bundle with TmuParams {
 
 class TDPUnit(implicit p: Parameters) extends XSModule with TDPUnitParams {
   val io = IO(new Bundle {
-    val tdpin  = Flipped(Decoupled(new TDPUnitInput))
-    val tdpout = Decoupled(new Bundle{})
+    val tdp_in  = Flipped(Decoupled(new TDPUnitInput))
+    val tdp_out = Decoupled(new Bundle{})
     val tileData = new TDPUnitToTiles
     val empty  = Output(Bool())
   })
@@ -367,7 +368,7 @@ class TDPUnit(implicit p: Parameters) extends XSModule with TDPUnitParams {
   val s1_in_ready  = Wire(Bool())
   val s0_s1_fire   = s0_out_valid && s1_in_ready
   val s0_stall     = Wire(Bool())
-  val s0_info      = TmuStageInfo(io.tdpin.fire, s0_s1_fire, io.tdpin.bits)
+  val s0_info      = TmuStageInfo(io.tdp_in.fire, s0_s1_fire, io.tdp_in.bits)
   val s0_tileB_buf_ptr = RegInit(0.U(tileBbuf_ptr_w.W)) // use tileB_buf(0) or tileB_buf(1) or ...
 
   when(s0_s1_fire) {
@@ -392,7 +393,7 @@ class TDPUnit(implicit p: Parameters) extends XSModule with TDPUnitParams {
   }
 
   s0_out_valid   := s0_info.valid && s0_row_walk_ptr.ready_go
-  io.tdpin.ready := s0_s1_fire || !s0_info.valid
+  io.tdp_in.ready := s0_s1_fire || !s0_info.valid
 
   
   // Stage 1: push tmmC into tileC_buf, push tmmA into tileA_buf
@@ -415,18 +416,18 @@ class TDPUnit(implicit p: Parameters) extends XSModule with TDPUnitParams {
 
 
   // Stage 2: pop data from tileC_buf
-  val s2_info = TmuStageInfo(s1_s2_fire, io.tdpout.fire, s1_info.regs)
+  val s2_info = TmuStageInfo(s1_s2_fire, io.tdp_out.fire, s1_info.regs)
   val s2_tileB_buf_ptr = RegEnable(s1_tileB_buf_ptr, s1_s2_fire) // use tileB_buf(0) or tileB_buf(1) or ...
 
   val s2_row_walk_ptr = RowWalkPtr()
-  when(io.tdpout.fire) {
+  when(io.tdp_out.fire) {
     s2_row_walk_ptr.reset()
   }.elsewhen(s2_info.valid) {
     s2_row_walk_ptr.update()
   }
 
-  s2_in_ready := io.tdpout.fire || !s2_info.valid
-  io.tdpout.valid := s2_row_walk_ptr.ready_go
+  s2_in_ready := io.tdp_out.fire || !s2_info.valid
+  io.tdp_out.valid := s2_row_walk_ptr.ready_go
 
 
   // 16 * 16 DPAUnits
