@@ -220,7 +220,8 @@ class TmuInstBuf (implicit p: Parameters) extends XSModule with TmuParams with H
     tlsInstBuf.setReady()
   }
 
-  val sel_tdp = isAfter(tdpInstBuf.deqData.robIdx, tlsInstBuf.deqData.robIdx) && tdpInstBuf.deqReady
+  // 选择两个队列出队列的表项中更老的指令
+  val sel_tdp = tdpInstBuf.deqReady && (!tlsInstBuf.deqReady || isAfter(tdpInstBuf.deqData.robIdx, tlsInstBuf.deqData.robIdx))
   io.inst_out.valid := Mux(sel_tdp, tdpInstBuf.deqReady, tlsInstBuf.deqReady)
   io.inst_out.bits  := Mux(sel_tdp, tdpInstBuf.deqData, tlsInstBuf.deqData)
   when(io.inst_out.fire) {
