@@ -147,7 +147,7 @@ class TmuInstBuf (implicit p: Parameters) extends XSModule with TmuParams with H
     val tls_done = Input(Bool()) // tls 指令执行完成信号
   })
 
-  case class InstBufTemplate (size: Int) extends XSModule with HasCircularQueuePtrHelper {
+  case class InstBufTemplate (size: Int) extends HasCircularQueuePtrHelper {
     val info  = Reg(Vec(size, new TmuDataInput))
     val valid = RegInit(VecInit(Seq.fill(size)(false.B)))
     
