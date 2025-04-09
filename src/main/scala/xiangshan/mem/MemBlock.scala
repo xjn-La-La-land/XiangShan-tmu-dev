@@ -275,8 +275,8 @@ class SbufferTmuArbiter (implicit p: Parameters) extends DCacheModule {
   // 响应分发逻辑：根据id最高位分发
   private val hitValid = io.out.main_pipe_hit_resp.valid
   private val hitData  = io.out.main_pipe_hit_resp.bits
-  private val replayValid = io.out.main_pipe_hit_resp.valid
-  private val replayData  = io.out.main_pipe_hit_resp.bits
+  private val replayValid = io.out.replay_resp.valid
+  private val replayData  = io.out.replay_resp.bits
 
   io.sbuffer.main_pipe_hit_resp.valid := hitValid && !hitData.id(reqIdWidth-1)
   io.sbuffer.main_pipe_hit_resp.bits  := hitData
