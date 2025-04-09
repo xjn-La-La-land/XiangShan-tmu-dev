@@ -37,6 +37,7 @@ import xiangshan.mem.{AddPipelineReg, HasL1PrefetchSourceParameter}
 import xiangshan.mem.prefetch._
 import xiangshan.mem.LqPtr
 import xiangshan.backend.exu.Dispatcher
+import xiangshan.backend.fu.TmuParams
 
 // DCache specific parameters
 case class DCacheParameters
@@ -91,7 +92,7 @@ case class DCacheParameters
 
 // Default DCache size = 64 sets * 8 ways * 8 banks * 8 Byte = 32K Byte
 
-trait HasDCacheParameters extends HasL1CacheParameters with HasL1PrefetchSourceParameter{
+trait HasDCacheParameters extends HasL1CacheParameters with HasL1PrefetchSourceParameter with TmuParams {
   val cacheParams = dcacheParameters
   val cfg = cacheParams
 
@@ -117,7 +118,7 @@ trait HasDCacheParameters extends HasL1CacheParameters with HasL1PrefetchSourceP
   def BLOOM_FILTER_ENTRY_NUM = 4096
 
   // each source use a id to distinguish its multiple reqs
-  def reqIdWidth = (log2Up(nEntries) max log2Up(StoreBufferSize)) + 1 // 1 bit to distinguish between sbuffer and tmu
+  def reqIdWidth = (log2Up(nEntries) max log2Up(StoreBufferSize) max log2Up(tileLSQ_sz)) + 1 // 1 bit to distinguish between sbuffer and tmu
 
   require(isPow2(cfg.nMissEntries)) // TODO
   // require(isPow2(cfg.nReleaseEntries))
