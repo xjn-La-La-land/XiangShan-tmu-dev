@@ -92,7 +92,8 @@ class ooo_to_mem(implicit p: Parameters) extends MemBlockBundle {
   val sfence = Input(new SfenceBundle)
   val tlbCsr = Input(new TlbCsrBundle)
   val tmuTlb = Flipped(new TlbRequestIO()) // for tmu
-  val tmuSbuffer = Vec(EnsbufferWidth, Flipped(Decoupled(new DCacheWordReqWithVaddrAndPfFlag))) 
+  // val tmuSbuffer = Vec(EnsbufferWidth, Flipped(Decoupled(new DCacheWordReqWithVaddrAndPfFlag)))
+  val tmuDcache = new DCacheToSbufferIO
   val lsqio = new Bundle {
     val lcommit = Input(UInt(log2Up(CommitWidth + 1).W))
     val scommit = Input(UInt(log2Up(CommitWidth + 1).W))
@@ -249,6 +250,54 @@ class FrontendBridge()(implicit p: Parameters) extends LazyModule {
   val instr_uncache_node = LazyModule(new InstrUncacheBuffer()).suggestName("instr_uncache").node
   lazy val module = new LazyModuleImp(this) {
   }
+}
+
+
+// HINT: Sbuffer与tmu共享dcache的写端口
+class SbufferTmuArbiter (implicit p: Parameters) extends DCacheModule {
+  val io = IO(new Bundle {
+    val tmu     = new DCacheToSbufferIO
+    val sbuffer = new DCacheToSbufferIO
+    val out     = Flipped(new DCacheToSbufferIO)
+  })
+
+  def wrapTmuId(id: UInt)   = Cat(1.U(1.W), id.take(reqIdWidth-1))
+  def unwrapTmuId(id: UInt) = Cat(0.U(1.W), id.take(reqIdWidth-1))
+
+  // 请求仲裁逻辑：优先发送sbuffer的写请求
+  private val reqArbiter = Module(new Arbiter(new DCacheLineReq, 2))
+  reqArbiter.io.in(0) <> io.sbuffer.req
+  reqArbiter.io.in(1) <> io.tmu.req
+
+  io.out.req <> reqArbiter.io.out
+  io.out.req.bits.id := Mux(reqArbiter.io.chosen === 1.U, wrapTmuId(reqArbiter.io.out.bits.id), reqArbiter.io.out.bits.id)
+
+  // 响应分发逻辑：根据id最高位分发
+  private val hitValid = io.out.main_pipe_hit_resp.valid
+  private val hitData  = io.out.main_pipe_hit_resp.bits
+  private val replayValid = io.out.main_pipe_hit_resp.valid
+  private val replayData  = io.out.main_pipe_hit_resp.bits
+
+  io.sbuffer.main_pipe_hit_resp.valid := hitValid && !hitData.id(reqIdWidth-1)
+  io.sbuffer.main_pipe_hit_resp.bits  := hitData
+  io.sbuffer.replay_resp.valid        := replayValid && !replayData.id(reqIdWidth-1)
+  io.sbuffer.replay_resp.bits         := replayData
+
+  io.tmu.main_pipe_hit_resp.valid     := hitValid && hitData.id(reqIdWidth-1)
+  io.tmu.main_pipe_hit_resp.bits      := hitData
+  io.tmu.main_pipe_hit_resp.bits.id   := unwrapTmuId(hitData.id)
+  io.tmu.replay_resp.valid            := replayValid && replayData.id(reqIdWidth-1)
+  io.tmu.replay_resp.bits             := replayData
+  io.tmu.replay_resp.bits.id          := unwrapTmuId(replayData.id)
+
+  // debug
+  when(io.tmu.main_pipe_hit_resp.fire) {
+    printf(p"[SbufferTmuArbiter] tmu hit: id = 0x${io.tmu.main_pipe_hit_resp.bits.id}\n")
+  }
+  when(io.tmu.replay_resp.fire) {
+    printf(p"[SbufferTmuArbiter] tmu replay: id = 0x${io.tmu.replay_resp.bits.id}\n")
+  }
+
 }
 
 class MemBlockInlined()(implicit p: Parameters) extends LazyModule
@@ -1463,26 +1512,13 @@ class MemBlockInlinedImp(outer: MemBlockInlined) extends LazyModuleImp(outer)
   io.mem_to_ooo.lqDeqPtr := lsq.io.lqDeqPtr
   lsq.io.tl_d_channel <> dcache.io.lsu.tl_d_channel
 
-  // LSQ to store buffer
-  // 对 lsq.io.sbuffer 与 tmu.io.sbuffer 进行仲裁
-  // 当 lsq 排空时，说明没有 load/store 指令需要与 sbuffer 交互，此时将 tmu.io.sbuffer 接入 sbuffer
-  val lsq_empty = lsq.io.lqEmpty && lsq.io.sqEmpty
 
-  lsq.io.sbuffer <> DontCare
-  io.ooo_to_mem.tmuSbuffer <> DontCare
-  io.ooo_to_mem.tmuSbuffer.foreach { _.ready := false.B }
-  lsq.io.sbuffer.foreach { _.ready := false.B }
-
-  when(!lsq_empty) {
-    lsq.io.sbuffer        <> sbuffer.io.in
-    sbuffer.io.in(0).valid := lsq.io.sbuffer(0).valid || vSegmentUnit.io.sbuffer.valid
-    sbuffer.io.in(0).bits  := Mux1H(Seq(
-      vSegmentUnit.io.sbuffer.valid -> vSegmentUnit.io.sbuffer.bits,
-      lsq.io.sbuffer(0).valid       -> lsq.io.sbuffer(0).bits
-    ))
-  }.otherwise {
-    io.ooo_to_mem.tmuSbuffer <> sbuffer.io.in
-  }
+  lsq.io.sbuffer <> sbuffer.io.in
+  sbuffer.io.in(0).valid := lsq.io.sbuffer(0).valid || vSegmentUnit.io.sbuffer.valid
+  sbuffer.io.in(0).bits  := Mux1H(Seq(
+    vSegmentUnit.io.sbuffer.valid -> vSegmentUnit.io.sbuffer.bits,
+    lsq.io.sbuffer(0).valid       -> lsq.io.sbuffer(0).bits
+  ))
   vSegmentUnit.io.sbuffer.ready := sbuffer.io.in(0).ready
   lsq.io.sqEmpty        <> sbuffer.io.sqempty
   dcache.io.force_write := lsq.io.force_write
@@ -1685,7 +1721,12 @@ class MemBlockInlinedImp(outer: MemBlockInlined) extends LazyModuleImp(outer)
 
   // Sbuffer
   sbuffer.io.csrCtrl    <> csrCtrl
-  sbuffer.io.dcache     <> dcache.io.lsu.store
+  // sbuffer.io.dcache 与 tmu.io.dcache 仲裁
+  val sbufTmuArbiter = Module(new SbufferTmuArbiter)
+  sbufTmuArbiter.io.sbuffer <> sbuffer.io.dcache
+  sbufTmuArbiter.io.tmu     <> io.ooo_to_mem.tmuDcache
+  sbufTmuArbiter.io.out     <> dcache.io.lsu.store
+
   sbuffer.io.memSetPattenDetected := dcache.io.memSetPattenDetected
   sbuffer.io.force_write <> lsq.io.force_write
   // flush sbuffer

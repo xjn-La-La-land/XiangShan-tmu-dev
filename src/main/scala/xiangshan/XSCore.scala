@@ -221,7 +221,7 @@ class XSCoreImp(outer: XSCoreBase) extends LazyModuleImp(outer)
   memBlock.io.ooo_to_mem.sfence <> backend.io.mem.sfence
 
   memBlock.io.ooo_to_mem.tmuTlb <> backend.io.mem.tmuTlb.get // connect tmuTlb and tmu
-  memBlock.io.ooo_to_mem.tmuSbuffer <> backend.io.mem.tmuSbuffer.get // connect tmuSbuffer and tmu
+  memBlock.io.ooo_to_mem.tmuDcache <> backend.io.mem.tmuDcache.get // connect tmuSbuffer and tmu
 
   memBlock.io.redirect := backend.io.mem.redirect
   memBlock.io.ooo_to_mem.csrCtrl := backend.io.mem.csrCtrl
