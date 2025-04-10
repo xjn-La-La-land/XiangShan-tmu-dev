@@ -541,7 +541,7 @@ trait TileLSUnitParams extends TmuParams with HasDCacheParameters with HasCircul
     def last: Bool = cnt === (numBurst-1).U
   }
   object LSQState {
-    val s_idle :: s_wait_paddr :: s_l2cacheR :: s_dcacheW :: s_dcacheWReplay :: s_done :: Nil = Enum(6)
+    val s_idle :: s_wait_paddr :: s_wait_req :: s_wait_resp :: s_wait_replay :: s_done :: Nil = Enum(6)
     def apply() = UInt(s_idle.getWidth.W)
   }
 
@@ -564,9 +564,9 @@ class TileLSQEntry(implicit p: Parameters) extends XSBundle with TileLSUnitParam
   val state = LSQState()
 
   def tlbReqValid: Bool = state === LSQState.s_wait_paddr
-  def l2CReqValid: Bool = state === LSQState.s_l2cacheR
-  def dCReqValid:  Bool = state === LSQState.s_dcacheW
-  def dCReqNeedReplay: Bool = state === LSQState.s_dcacheWReplay
+  def l2CReqValid: Bool = state === LSQState.s_wait_req && MemOp.isLoad(memOp)
+  def dCReqValid:  Bool = state === LSQState.s_wait_req && MemOp.isStore(memOp)
+  def dCReqNeedReplay: Bool = state === LSQState.s_wait_replay
 }
 
 class TileLSUnitToTiles(implicit val p: Parameters) extends Bundle with TileLSUnitParams {
@@ -748,7 +748,7 @@ class TileLSUnit (implicit p: Parameters) extends XSModule with TileLSUnitParams
   io.tileData.tmmRead.ren   := dCReq_entry.dCReqValid && !l2sCheck || dCReq_entry.dCReqNeedReplay
   
   l2sCheck := ParallelOR(state_queue.zip(ctrl_queue).map { case (state, ctrl) =>
-    state === LSQState.s_l2cacheR &&
+    state === LSQState.s_wait_resp && MemOp.isLoad(ctrl.memOp) && 
     ctrl.tmm === dCReq_entry.tmm && ctrl.row === dCReq_entry.row // 未完成的 load 请求
   }) // load to store check!
 
@@ -767,7 +767,9 @@ class TileLSUnit (implicit p: Parameters) extends XSModule with TileLSUnitParams
   io.dcache.req.bits.mask  := Fill(l1TstDataWidth/8, 1.U(1.W))
   io.dcache.req.bits.id    := Mux(dCReq_entry.dCReqNeedReplay, out_ptr.value, mem_ptr.value)
 
-  when(io.memBus.req.fire || io.dcache.req.fire && !deq_entry.dCReqNeedReplay) {
+  val memReqDone    = io.memBus.req.fire || io.dcache.req.fire && !dCReq_entry.dCReqNeedReplay
+  val replayReqDone = io.dcache.req.fire && dCReq_entry.dCReqNeedReplay
+  when(memReqDone) {
     mem_ptr := mem_ptr + 1.U // mem_ptr 指针更新
   }
 
@@ -777,11 +779,11 @@ class TileLSUnit (implicit p: Parameters) extends XSModule with TileLSUnitParams
   when(hit_resp.valid) { // dcache write hit
     assert(!hit_resp.bits.miss)
     assert(!hit_resp.bits.replay)
-    assert(state_queue(hit_resp.bits.id) === LSQState.s_dcacheW || state_queue(hit_resp.bits.id) === LSQState.s_dcacheWReplay)
+    assert(state_queue(hit_resp.bits.id) === LSQState.s_wait_resp && MemOp.isStore(ctrl_queue(hit_resp.bits.id).memOp))
   }
   when(replay_resp.valid) { // dcache write need replay
     assert(replay_resp.bits.replay)
-    assert(state_queue(replay_resp.bits.id) === LSQState.s_dcacheW || state_queue(replay_resp.bits.id) === LSQState.s_dcacheWReplay)
+    assert(state_queue(replay_resp.bits.id) === LSQState.s_wait_resp && MemOp.isStore(ctrl_queue(replay_resp.bits.id).memOp))
   }
 
   // LSQueue 出队
@@ -799,18 +801,19 @@ class TileLSUnit (implicit p: Parameters) extends XSModule with TileLSUnitParams
         state_queue(i) := Mux(enq_enable && in_ptr.value === i.U, LSQState.s_wait_paddr, LSQState.s_idle)
       }
       is(LSQState.s_wait_paddr) {
-        state_queue(i) := Mux(tlbRespDone && tlb_ptr.value === i.U, 
-                          Mux(MemOp.isLoad(ctrl_queue(i).memOp), LSQState.s_l2cacheR, LSQState.s_dcacheW), LSQState.s_wait_paddr)
+        state_queue(i) := Mux(tlbRespDone && tlb_ptr.value === i.U, LSQState.s_wait_req, LSQState.s_wait_paddr)
       }
-      is(LSQState.s_l2cacheR) {
-        state_queue(i) := Mux(l2CRespDone && io.memBus.resp.bits.source === i.U, LSQState.s_done, LSQState.s_l2cacheR)
+      is(LSQState.s_wait_req) {
+        // state_queue(i) := Mux(l2CRespDone && io.memBus.resp.bits.source === i.U, LSQState.s_done, LSQState.s_l2cacheR)
+        state_queue(i) := Mux(memReqDone && mem_ptr.value === i.U, LSQState.s_wait_resp, LSQState.s_wait_req)
       }
-      is(LSQState.s_dcacheW) {
-        state_queue(i) := Mux(hit_resp.valid && hit_resp.bits.id === i.U, LSQState.s_done,
-                          Mux(replay_resp.valid && replay_resp.bits.id === i.U, LSQState.s_dcacheWReplay, LSQState.s_dcacheW))
+      is(LSQState.s_wait_resp) {
+        state_queue(i) := Mux(l2CRespDone && io.memBus.resp.bits.source === i.U, LSQState.s_done,
+                          Mux(hit_resp.valid && hit_resp.bits.id === i.U,        LSQState.s_done,
+                          Mux(replay_resp.valid && replay_resp.bits.id === i.U,  LSQState.s_wait_replay, LSQState.s_wait_resp)))
       }
-      is(LSQState.s_dcacheWReplay) {
-        state_queue(i) := Mux(hit_resp.valid && hit_resp.bits.id === i.U, LSQState.s_done, LSQState.s_dcacheWReplay)
+      is(LSQState.s_wait_replay) {
+        state_queue(i) := Mux(replayReqDone && out_ptr.value === i.U, LSQState.s_wait_resp, LSQState.s_wait_replay)
       }
       is(LSQState.s_done) {
         state_queue(i) := Mux(deq_enable && out_ptr.value === i.U, LSQState.s_idle, LSQState.s_done)
