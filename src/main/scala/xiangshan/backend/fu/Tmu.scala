@@ -781,7 +781,7 @@ class TileLSUnit (implicit p: Parameters) extends XSModule with TileLSUnitParams
   }
   when(replay_resp.valid) { // dcache write need replay
     assert(replay_resp.bits.replay)
-    assert(state_queue(hit_resp.bits.id) === LSQState.s_dcacheW || state_queue(hit_resp.bits.id) === LSQState.s_dcacheWReplay)
+    assert(state_queue(replay_resp.bits.id) === LSQState.s_dcacheW || state_queue(replay_resp.bits.id) === LSQState.s_dcacheWReplay)
   }
 
   // LSQueue 出队
