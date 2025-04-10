@@ -767,7 +767,7 @@ class TileLSUnit (implicit p: Parameters) extends XSModule with TileLSUnitParams
   io.dcache.req.bits.mask  := Fill(l1TstDataWidth/8, 1.U(1.W))
   io.dcache.req.bits.id    := Mux(dCReq_entry.dCReqNeedReplay, out_ptr.value, mem_ptr.value)
 
-  when(io.memBus.req.fire || io.dcache.req.fire) {
+  when(io.memBus.req.fire || io.dcache.req.fire && !deq_entry.dCReqNeedReplay) {
     mem_ptr := mem_ptr + 1.U // mem_ptr 指针更新
   }
 
