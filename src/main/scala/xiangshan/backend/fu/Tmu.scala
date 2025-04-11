@@ -53,10 +53,33 @@ trait TmuParams extends HasXSParameter {
 
   val tdpInstBuf_sz = 4 // tdpUnit 能容纳的最大指令数量+1
   val tlsInstBuf_sz = 3 // tlsUnit 能容纳的最大指令数量+1
+  class InstBufPtr (size: Int)(implicit p: Parameters) extends CircularQueuePtr[InstBufPtr](p => size)
 
-  object TileState {
-    val idle :: read :: write :: Nil = Enum(3)
-    def apply() = UInt(idle.getWidth.W)
+  case class InstBufTemplate (size: Int) extends HasCircularQueuePtrHelper {
+    val info  = Reg(Vec(size, new TmuDataInput))
+    val valid = RegInit(VecInit(Seq.fill(size)(false.B)))
+
+    val enq_ptr = RegInit(0.U.asTypeOf(new InstBufPtr(size)))
+    val rdy_ptr = RegInit(0.U.asTypeOf(new InstBufPtr(size)))
+    val deq_ptr = RegInit(0.U.asTypeOf(new InstBufPtr(size)))
+
+    def isFull:  Bool = isFull(enq_ptr, deq_ptr)
+    def isEmpty: Bool = isEmpty(enq_ptr, deq_ptr)
+
+    def enq(inst: TmuDataInput): Unit = {
+      info(enq_ptr.value) := inst
+      valid(enq_ptr.value) := true.B
+      enq_ptr := enq_ptr + 1.U
+    }
+    def deqData  = info(deq_ptr.value)
+    def deqReady = !isEmpty && !valid(deq_ptr.value)
+    def deq(): Unit = {
+      deq_ptr := deq_ptr + 1.U
+    }
+    def setReady(): Unit = {
+      valid(rdy_ptr.value) := false.B
+      rdy_ptr := rdy_ptr + 1.U
+    }
   }
 }
 
@@ -131,86 +154,61 @@ class TmuInstBuf (implicit p: Parameters) extends XSModule with TmuParams with H
   val io = IO(new Bundle {
     val inst_in  = Flipped(Decoupled(new TmuDataInput))
     val inst_out = Decoupled(new TmuDataInput)
-    val stageCtrl = Flipped(new TDPUnitStageCtrl)
+    val tdpInIBufPtr = new InstBufPtr(tdpInstBuf_sz) // new instBuf ptr for tdp
+    val tdpStageCtrl = Flipped(new TDPUnitStageCtrl)
     val tdp_done = Input(Bool()) // tdp 指令执行完成信号
     val tls_done = Input(Bool()) // tls 指令执行完成信号
   })
 
-  case class InstBufTemplate (size: Int) extends HasCircularQueuePtrHelper {
-    val info  = Reg(Vec(size, new TmuDataInput))
-    val valid = RegInit(VecInit(Seq.fill(size)(false.B)))
-    
-    class InstBufPtr (implicit p: Parameters) extends CircularQueuePtr[InstBufPtr](p => size)
-
-    private val enq_ptr = RegInit(0.U.asTypeOf(new InstBufPtr))
-    private val rdy_ptr = RegInit(0.U.asTypeOf(new InstBufPtr))
-    private val deq_ptr = RegInit(0.U.asTypeOf(new InstBufPtr))
-
-    def isFull:  Bool = isFull(enq_ptr, deq_ptr)
-    def isEmpty: Bool = isEmpty(enq_ptr, deq_ptr)
-
-    def enq(inst: TmuDataInput): Unit = {
-      info(enq_ptr.value) := inst
-      valid(enq_ptr.value) := true.B
-      enq_ptr := enq_ptr + 1.U
-    }
-    def deqData  = info(deq_ptr.value)
-    def deqReady = !isEmpty && !valid(deq_ptr.value)
-    def deq(): Unit = {
-      deq_ptr := deq_ptr + 1.U
-    }
-    def setReady(): Unit = {
-      valid(rdy_ptr.value) := false.B
-      rdy_ptr := rdy_ptr + 1.U
-    }
-  }
-
   // tdp指令和tls指令分开存放，便于数据冲突判断
   val tdpInstBuf = InstBufTemplate(tdpInstBuf_sz)
   val tlsInstBuf = InstBufTemplate(tlsInstBuf_sz)
+  io.tdpInIBufPtr := tdpInstBuf.enq_ptr
 
+  val tdpS0Inst = tdpInstBuf.info(io.tdpStageCtrl.stageIBufPtr(0).value)
+  val tdpS1Inst = tdpInstBuf.info(io.tdpStageCtrl.stageIBufPtr(1).value)
+  val tdpS2Inst = tdpInstBuf.info(io.tdpStageCtrl.stageIBufPtr(2).value)
+
+  // tdp 指令的阻塞信号
   val tdpS0_stall_in = ParallelOR(tlsInstBuf.info zip tlsInstBuf.valid map { case (info, valid) =>
     val raw = io.inst_in.bits.tmmB === info.tmmC && !info.isWrite
     raw && valid
   })
   val tdpS1_stall_in = ParallelOR(tlsInstBuf.info zip tlsInstBuf.valid map { case (info, valid) =>
-    val s0_tmmA = io.stageCtrl.s0_tmmA
-    val s0_tmmC = io.stageCtrl.s0_tmmC
-    val s0_robIdx = io.stageCtrl.s0_robIdx
+    val s0_tmmA = tdpS0Inst.tmmA
+    val s0_tmmC = tdpS0Inst.tmmC
+    val s0_robIdx = tdpS0Inst.robIdx
     val raw = (s0_tmmA === info.tmmC || s0_tmmC === info.tmmC) && !info.isWrite && isBefore(s0_robIdx, info.robIdx)
     raw && valid
   })
   val tdpS2_stall_in = ParallelOR(tlsInstBuf.info zip tlsInstBuf.valid map { case (info, valid) =>
-    val s1_tmmC   = io.stageCtrl.s1_tmmC
-    val s1_robIdx = io.stageCtrl.s1_robIdx
+    val s1_tmmC = tdpS1Inst.tmmC
+    val s1_robIdx = tdpS1Inst.robIdx
     val waw = (s1_tmmC === info.tmmC) && !info.isWrite && isBefore(s1_robIdx, info.robIdx)
     val war = (s1_tmmC === info.tmmC) && info.isWrite && isBefore(s1_robIdx, info.robIdx)
     (waw || war) && valid
   })
+  // tls 指令的阻塞信号
+  val s0_collision = Seq(tdpS0Inst.tmmA, tdpS0Inst.tmmB, tdpS0Inst.tmmC).map(_ === io.inst_in.bits.tmmC).reduce(_ || _) &&
+                     io.tdpStageCtrl.stageValid(0)
+  val s1_collision = Seq(tdpS1Inst.tmmA, tdpS1Inst.tmmC).map(_ === io.inst_in.bits.tmmC).reduce(_ || _) &&
+                     io.tdpStageCtrl.stageValid(1)
+  val s2_collision = Seq(tdpS2Inst.tmmC).map(_ === io.inst_in.bits.tmmC).reduce(_ || _) &&
+                     io.tdpStageCtrl.stageValid(2)
 
-
-  val tileload_stall_in = ParallelOR((tdpInstBuf.info zip tdpInstBuf.valid).map { case(info, valid) =>
-    val waw = io.inst_in.bits.tmmC === info.tmmC
-    val war = io.inst_in.bits.tmmC === info.tmmA || io.inst_in.bits.tmmC === info.tmmB
-    (waw || war) && valid
-  })
-  val tilestore_stall_in = ParallelOR((tdpInstBuf.info zip tdpInstBuf.valid).map { case(info, valid) =>
-    val raw = io.inst_in.bits.tmmC === info.tmmC
-    raw && valid
-  })
+  val tls_stall_in = s0_collision || s1_collision || s2_collision
 
   val stall_in = Wire(Bool())
   val canAccept = Wire(Bool())
-  stall_in := Mux(io.inst_in.bits.isTileLS,
-              Mux(io.inst_in.bits.isWrite, tilestore_stall_in, tileload_stall_in), false.B)
+  stall_in := Mux(io.inst_in.bits.isTileLS, tls_stall_in, false.B)
   canAccept := Mux(io.inst_in.bits.isTdp, !tdpInstBuf.isFull, !tlsInstBuf.isFull)
   dontTouch(stall_in)
   dontTouch(canAccept)
 
   io.inst_in.ready := canAccept && !stall_in
-  io.stageCtrl.s0_allowIn := !tdpS0_stall_in
-  io.stageCtrl.s1_allowIn := !tdpS1_stall_in
-  io.stageCtrl.s2_allowIn := !tdpS2_stall_in
+  io.tdpStageCtrl.stageAllowIn(0) := !tdpS0_stall_in
+  io.tdpStageCtrl.stageAllowIn(1) := !tdpS1_stall_in
+  io.tdpStageCtrl.stageAllowIn(2) := !tdpS2_stall_in
   when(io.inst_in.fire) {
     when(io.inst_in.bits.isTdp) {
       tdpInstBuf.enq(io.inst_in.bits)
@@ -282,7 +280,7 @@ class TmuModule (implicit p: Parameters) extends XSModule with TmuParams with Ha
   val instBuf = Module(new TmuInstBuf)
   instBuf.io.inst_in.bits   := io.in.bits
   instBuf.io.inst_in.valid  := io.in.fire
-  instBuf.io.stageCtrl      <> tdpUnit.io.stageCtrl
+  instBuf.io.tdpStageCtrl   <> tdpUnit.io.stageCtrl
   instBuf.io.tdp_done       := tdpUnit.io.done
   instBuf.io.tls_done       := tlsUnit.io.done
   instBuf.io.inst_out.ready := io.out.ready
@@ -298,7 +296,7 @@ class TmuModule (implicit p: Parameters) extends XSModule with TmuParams with Ha
   tdpUnit.io.tdp_in.bits.tmmB  := io.in.bits.tmmB
   tdpUnit.io.tdp_in.bits.tmmC  := io.in.bits.tmmC
   tdpUnit.io.tdp_in.bits.tdpOp := io.in.bits.TdpOp
-  tdpUnit.io.tdp_in.bits.robIdx := io.in.bits.robIdx
+  tdpUnit.io.tdp_in.bits.instBufPtr := instBuf.io.tdpInIBufPtr
   
   // connect to tlsUnit
   tlsUnit.io.tls_in.valid := io.in.fire && io.in.bits.isTileLS
@@ -380,7 +378,7 @@ class TDPUnitInput(implicit p: Parameters) extends XSBundle with TDPUnitParams {
   val tmmB = UInt(tile_idx_w.W)
   val tmmC = UInt(tile_idx_w.W)
   val tdpOp = TdpOp()
-  val robIdx = new RobPtr
+  val instBufPtr = new InstBufPtr(tdpInstBuf_sz) // tdpUnit instBuf pointer
 }
 
 class TDPUnitToTiles(implicit val p: Parameters) extends Bundle with TmuParams {
@@ -392,15 +390,9 @@ class TDPUnitToTiles(implicit val p: Parameters) extends Bundle with TmuParams {
 
 
 class TDPUnitStageCtrl(implicit val p: Parameters) extends Bundle with TDPUnitParams {
-  val s0_tmmA = UInt(tile_idx_w.W) // s0 tdp want to read tmmA
-  val s0_tmmC = UInt(tile_idx_w.W) // s0 tdp want to read tmmC
-  val s0_robIdx = new RobPtr       // s0 tdp robIdx
-  val s1_tmmC = UInt(tile_idx_w.W) // s1 tdp want to write tmmC
-  val s1_robIdx = new RobPtr       // s1 tdp robIdx
-  
-  val s0_allowIn = Flipped(Bool()) // allow next tdp to enter s0
-  val s1_allowIn = Flipped(Bool()) // allow next tdp to enter s1
-  val s2_allowIn = Flipped(Bool()) // allow next rdp to enter s2
+  val stageIBufPtr = Vec(3, new InstBufPtr(tdpInstBuf_sz)) // stage instBuf pointer
+  val stageValid   = Vec(3, Bool()) // stage valid signal
+  val stageAllowIn = Flipped(Vec(3, Bool())) // stage allowIn signal
 }
 
 
@@ -457,7 +449,7 @@ class TDPUnit(implicit p: Parameters) extends XSModule with TDPUnitParams {
   }
 
   s0_out_valid   := s0_info.valid && s0_row_walk_ptr.ready_go
-  io.tdp_in.ready := (s0_s1_fire || !s0_info.valid) && io.stageCtrl.s0_allowIn
+  io.tdp_in.ready := (s0_s1_fire || !s0_info.valid) && io.stageCtrl.stageAllowIn(0)
 
   
   // Stage 1: push tmmC into tileC_buf, push tmmA into tileA_buf
@@ -476,7 +468,7 @@ class TDPUnit(implicit p: Parameters) extends XSModule with TDPUnitParams {
   }
 
   s1_out_valid := s1_info.valid && s1_row_walk_ptr.ready_go
-  s1_in_ready  := (s1_s2_fire || !s1_info.valid) && io.stageCtrl.s1_allowIn
+  s1_in_ready  := (s1_s2_fire || !s1_info.valid) && io.stageCtrl.stageAllowIn(1)
 
 
   // Stage 2: pop data from tileC_buf
@@ -490,7 +482,7 @@ class TDPUnit(implicit p: Parameters) extends XSModule with TDPUnitParams {
     s2_row_walk_ptr.update()
   }
 
-  s2_in_ready := (io.done || !s2_info.valid) && io.stageCtrl.s2_allowIn
+  s2_in_ready := (io.done || !s2_info.valid) && io.stageCtrl.stageAllowIn(2)
   io.done     := s2_row_walk_ptr.ready_go
 
 
@@ -546,11 +538,12 @@ class TDPUnit(implicit p: Parameters) extends XSModule with TDPUnitParams {
               s0_ren.zip(s2_wen).map(r => r._1 && r._2).reduce(_ || _)    // s0 read and s2 write the same tile
   s1_stall := s1_ren.zip(s2_wen).map(r => r._1 && r._2).reduce(_ || _)    // s1 read and s2 write the same tile
 
-  io.stageCtrl.s0_tmmA := s0_info.regs.tmmA
-  io.stageCtrl.s0_tmmC := s0_info.regs.tmmC
-  io.stageCtrl.s0_robIdx := s0_info.regs.robIdx
-  io.stageCtrl.s1_tmmC := s1_info.regs.tmmC
-  io.stageCtrl.s1_robIdx := s1_info.regs.robIdx
+  io.stageCtrl.stageIBufPtr(0) := s0_info.regs.instBufPtr
+  io.stageCtrl.stageIBufPtr(1) := s1_info.regs.instBufPtr
+  io.stageCtrl.stageIBufPtr(2) := s2_info.regs.instBufPtr
+  io.stageCtrl.stageValid(0)   := s0_info.valid
+  io.stageCtrl.stageValid(1)   := s1_info.valid
+  io.stageCtrl.stageValid(2)   := s2_info.valid
 }
 
 
