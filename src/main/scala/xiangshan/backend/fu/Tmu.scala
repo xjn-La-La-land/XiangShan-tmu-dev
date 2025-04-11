@@ -178,14 +178,14 @@ class TmuInstBuf (implicit p: Parameters) extends XSModule with TmuParams with H
     val s0_tmmA = tdpS0Inst.tmmA
     val s0_tmmC = tdpS0Inst.tmmC
     val s0_robIdx = tdpS0Inst.robIdx
-    val raw = (s0_tmmA === info.tmmC || s0_tmmC === info.tmmC) && !info.isWrite && isBefore(s0_robIdx, info.robIdx)
+    val raw = (s0_tmmA === info.tmmC || s0_tmmC === info.tmmC) && !info.isWrite && isAfter(s0_robIdx, info.robIdx)
     raw && valid
   })
   val tdpS2_stall_in = ParallelOR(tlsInstBuf.info zip tlsInstBuf.valid map { case (info, valid) =>
     val s1_tmmC = tdpS1Inst.tmmC
     val s1_robIdx = tdpS1Inst.robIdx
-    val waw = (s1_tmmC === info.tmmC) && !info.isWrite && isBefore(s1_robIdx, info.robIdx)
-    val war = (s1_tmmC === info.tmmC) && info.isWrite && isBefore(s1_robIdx, info.robIdx)
+    val waw = (s1_tmmC === info.tmmC) && !info.isWrite && isAfter(s1_robIdx, info.robIdx)
+    val war = (s1_tmmC === info.tmmC) && info.isWrite && isAfter(s1_robIdx, info.robIdx)
     (waw || war) && valid
   })
   // tls 指令的阻塞信号
@@ -217,15 +217,11 @@ class TmuInstBuf (implicit p: Parameters) extends XSModule with TmuParams with H
     }
   }
 
-  when(io.tdp_done) {
-    tdpInstBuf.setReady()
-  }
-  when(io.tls_done) {
-    tlsInstBuf.setReady()
-  }
+  when(io.tdp_done) { tdpInstBuf.setReady() }
+  when(io.tls_done) { tlsInstBuf.setReady() }
 
   // 选择两个队列出队列的表项中更老的指令
-  val sel_tdp = tdpInstBuf.deqReady && (!tlsInstBuf.deqReady || isAfter(tdpInstBuf.deqData.robIdx, tlsInstBuf.deqData.robIdx))
+  val sel_tdp = tdpInstBuf.deqReady && (!tlsInstBuf.deqReady || isBefore(tdpInstBuf.deqData.robIdx, tlsInstBuf.deqData.robIdx))
   io.inst_out.valid := Mux(sel_tdp, tdpInstBuf.deqReady, tlsInstBuf.deqReady)
   io.inst_out.bits  := Mux(sel_tdp, tdpInstBuf.deqData, tlsInstBuf.deqData)
   when(io.inst_out.fire) {
