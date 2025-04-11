@@ -282,6 +282,7 @@ class TmuModule (implicit p: Parameters) extends XSModule with TmuParams with Ha
   val instBuf = Module(new TmuInstBuf)
   instBuf.io.inst_in.bits   := io.in.bits
   instBuf.io.inst_in.valid  := io.in.fire
+  instBuf.io.stageCtrl      <> tdpUnit.io.stageCtrl
   instBuf.io.tdp_done       := tdpUnit.io.done
   instBuf.io.tls_done       := tlsUnit.io.done
   instBuf.io.inst_out.ready := io.out.ready
