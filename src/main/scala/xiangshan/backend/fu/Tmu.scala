@@ -298,6 +298,7 @@ class TmuModule (implicit p: Parameters) extends XSModule with TmuParams with Ha
   tdpUnit.io.tdp_in.bits.tmmB  := io.in.bits.tmmB
   tdpUnit.io.tdp_in.bits.tmmC  := io.in.bits.tmmC
   tdpUnit.io.tdp_in.bits.tdpOp := io.in.bits.TdpOp
+  tdpUnit.io.tdp_in.bits.robIdx := io.in.bits.robIdx
   
   // connect to tlsUnit
   tlsUnit.io.tls_in.valid := io.in.fire && io.in.bits.isTileLS
