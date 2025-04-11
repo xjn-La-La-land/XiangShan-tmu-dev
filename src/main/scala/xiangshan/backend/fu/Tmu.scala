@@ -131,6 +131,7 @@ class TmuInstBuf (implicit p: Parameters) extends XSModule with TmuParams with H
   val io = IO(new Bundle {
     val inst_in  = Flipped(Decoupled(new TmuDataInput))
     val inst_out = Decoupled(new TmuDataInput)
+    val stageCtrl = Flipped(new TDPUnitStageCtrl)
     val tdp_done = Input(Bool()) // tdp 指令执行完成信号
     val tls_done = Input(Bool()) // tls 指令执行完成信号
   })
@@ -168,12 +169,26 @@ class TmuInstBuf (implicit p: Parameters) extends XSModule with TmuParams with H
   val tdpInstBuf = InstBufTemplate(tdpInstBuf_sz)
   val tlsInstBuf = InstBufTemplate(tlsInstBuf_sz)
 
-  val tdp_stall_in = ParallelOR((tlsInstBuf.info zip tlsInstBuf.valid).map { case(info, valid) =>
-    val raw = (io.inst_in.bits.tmmA === info.tmmC || io.inst_in.bits.tmmB === info.tmmC) && !info.isWrite
-    val waw = (io.inst_in.bits.tmmC === info.tmmC) && !info.isWrite
-    val war = (io.inst_in.bits.tmmC === info.tmmC) && info.isWrite
-    (raw || waw || war) && valid
+  val tdpS0_stall_in = ParallelOR(tlsInstBuf.info zip tlsInstBuf.valid map { case (info, valid) =>
+    val raw = io.inst_in.bits.tmmB === info.tmmC && !info.isWrite
+    raw && valid
   })
+  val tdpS1_stall_in = ParallelOR(tlsInstBuf.info zip tlsInstBuf.valid map { case (info, valid) =>
+    val s0_tmmA = io.stageCtrl.s0_tmmA
+    val s0_tmmC = io.stageCtrl.s0_tmmC
+    val s0_robIdx = io.stageCtrl.s0_robIdx
+    val raw = (s0_tmmA === info.tmmC || s0_tmmC === info.tmmC) && !info.isWrite && isBefore(s0_robIdx, info.robIdx)
+    raw && valid
+  })
+  val tdpS2_stall_in = ParallelOR(tlsInstBuf.info zip tlsInstBuf.valid map { case (info, valid) =>
+    val s1_tmmC   = io.stageCtrl.s1_tmmC
+    val s1_robIdx = io.stageCtrl.s1_robIdx
+    val waw = (s1_tmmC === info.tmmC) && !info.isWrite && isBefore(s1_robIdx, info.robIdx)
+    val war = (s1_tmmC === info.tmmC) && info.isWrite && isBefore(s1_robIdx, info.robIdx)
+    (waw || war) && valid
+  })
+
+
   val tileload_stall_in = ParallelOR((tdpInstBuf.info zip tdpInstBuf.valid).map { case(info, valid) =>
     val waw = io.inst_in.bits.tmmC === info.tmmC
     val war = io.inst_in.bits.tmmC === info.tmmA || io.inst_in.bits.tmmC === info.tmmB
@@ -186,13 +201,16 @@ class TmuInstBuf (implicit p: Parameters) extends XSModule with TmuParams with H
 
   val stall_in = Wire(Bool())
   val canAccept = Wire(Bool())
-  stall_in := Mux(io.inst_in.bits.isTdp, tdp_stall_in,
-              Mux(io.inst_in.bits.isWrite, tilestore_stall_in, tileload_stall_in))
+  stall_in := Mux(io.inst_in.bits.isTileLS,
+              Mux(io.inst_in.bits.isWrite, tilestore_stall_in, tileload_stall_in), false.B)
   canAccept := Mux(io.inst_in.bits.isTdp, !tdpInstBuf.isFull, !tlsInstBuf.isFull)
   dontTouch(stall_in)
   dontTouch(canAccept)
 
   io.inst_in.ready := canAccept && !stall_in
+  io.stageCtrl.s0_allowIn := !tdpS0_stall_in
+  io.stageCtrl.s1_allowIn := !tdpS1_stall_in
+  io.stageCtrl.s2_allowIn := !tdpS2_stall_in
   when(io.inst_in.fire) {
     when(io.inst_in.bits.isTdp) {
       tdpInstBuf.enq(io.inst_in.bits)
@@ -360,6 +378,7 @@ class TDPUnitInput(implicit p: Parameters) extends XSBundle with TDPUnitParams {
   val tmmB = UInt(tile_idx_w.W)
   val tmmC = UInt(tile_idx_w.W)
   val tdpOp = TdpOp()
+  val robIdx = new RobPtr
 }
 
 class TDPUnitToTiles(implicit val p: Parameters) extends Bundle with TmuParams {
@@ -369,11 +388,26 @@ class TDPUnitToTiles(implicit val p: Parameters) extends Bundle with TmuParams {
   val tmmCWrite = new TilesWritePort
 }
 
+
+class TDPUnitStageCtrl(implicit val p: Parameters) extends Bundle with TDPUnitParams {
+  val s0_tmmA = UInt(tile_idx_w.W) // s0 tdp want to read tmmA
+  val s0_tmmC = UInt(tile_idx_w.W) // s0 tdp want to read tmmC
+  val s0_robIdx = new RobPtr       // s0 tdp robIdx
+  val s1_tmmC = UInt(tile_idx_w.W) // s1 tdp want to write tmmC
+  val s1_robIdx = new RobPtr       // s1 tdp robIdx
+  
+  val s0_allowIn = Flipped(Bool()) // allow next tdp to enter s0
+  val s1_allowIn = Flipped(Bool()) // allow next tdp to enter s1
+  val s2_allowIn = Flipped(Bool()) // allow next rdp to enter s2
+}
+
+
 class TDPUnit(implicit p: Parameters) extends XSModule with TDPUnitParams {
   val io = IO(new Bundle {
-    val tdp_in  = Flipped(Decoupled(new TDPUnitInput))
-    val done    = Output(Bool())
-    val tileData = new TDPUnitToTiles
+    val tdp_in    = Flipped(Decoupled(new TDPUnitInput))
+    val done      = Output(Bool())
+    val stageCtrl = new TDPUnitStageCtrl
+    val tileData  = new TDPUnitToTiles
   })
 
   // registers for tdp operation
@@ -421,7 +455,7 @@ class TDPUnit(implicit p: Parameters) extends XSModule with TDPUnitParams {
   }
 
   s0_out_valid   := s0_info.valid && s0_row_walk_ptr.ready_go
-  io.tdp_in.ready := s0_s1_fire || !s0_info.valid
+  io.tdp_in.ready := (s0_s1_fire || !s0_info.valid) && io.stageCtrl.s0_allowIn
 
   
   // Stage 1: push tmmC into tileC_buf, push tmmA into tileA_buf
@@ -440,7 +474,7 @@ class TDPUnit(implicit p: Parameters) extends XSModule with TDPUnitParams {
   }
 
   s1_out_valid := s1_info.valid && s1_row_walk_ptr.ready_go
-  s1_in_ready  := s1_s2_fire || !s1_info.valid
+  s1_in_ready  := (s1_s2_fire || !s1_info.valid) && io.stageCtrl.s1_allowIn
 
 
   // Stage 2: pop data from tileC_buf
@@ -454,7 +488,7 @@ class TDPUnit(implicit p: Parameters) extends XSModule with TDPUnitParams {
     s2_row_walk_ptr.update()
   }
 
-  s2_in_ready := io.done || !s2_info.valid
+  s2_in_ready := (io.done || !s2_info.valid) && io.stageCtrl.s2_allowIn
   io.done     := s2_row_walk_ptr.ready_go
 
 
@@ -509,6 +543,12 @@ class TDPUnit(implicit p: Parameters) extends XSModule with TDPUnitParams {
   s0_stall := s0_ren.zip(s1_ren).map(r => r._1 && r._2).reduce(_ || _) || // s0 and s1 read the same tile
               s0_ren.zip(s2_wen).map(r => r._1 && r._2).reduce(_ || _)    // s0 read and s2 write the same tile
   s1_stall := s1_ren.zip(s2_wen).map(r => r._1 && r._2).reduce(_ || _)    // s1 read and s2 write the same tile
+
+  io.stageCtrl.s0_tmmA := s0_info.regs.tmmA
+  io.stageCtrl.s0_tmmC := s0_info.regs.tmmC
+  io.stageCtrl.s0_robIdx := s0_info.regs.robIdx
+  io.stageCtrl.s1_tmmC := s1_info.regs.tmmC
+  io.stageCtrl.s1_robIdx := s1_info.regs.robIdx
 }
 
 

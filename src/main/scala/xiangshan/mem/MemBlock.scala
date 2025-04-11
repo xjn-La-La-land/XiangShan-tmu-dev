@@ -291,12 +291,12 @@ class SbufferTmuArbiter (implicit p: Parameters) extends DCacheModule {
   io.tmu.replay_resp.bits.id          := unwrapTmuId(replayData.id)
 
   // debug
-  when(io.tmu.main_pipe_hit_resp.fire) {
-    printf(p"[SbufferTmuArbiter] tmu hit: id = 0x${io.tmu.main_pipe_hit_resp.bits.id}\n")
-  }
-  when(io.tmu.replay_resp.fire) {
-    printf(p"[SbufferTmuArbiter] tmu replay: id = 0x${io.tmu.replay_resp.bits.id}\n")
-  }
+  // when(io.tmu.main_pipe_hit_resp.fire) {
+  //   printf(p"[SbufferTmuArbiter] tmu hit: id = 0x${io.tmu.main_pipe_hit_resp.bits.id}\n")
+  // }
+  // when(io.tmu.replay_resp.fire) {
+  //   printf(p"[SbufferTmuArbiter] tmu replay: id = 0x${io.tmu.replay_resp.bits.id}\n")
+  // }
 
 }
 
