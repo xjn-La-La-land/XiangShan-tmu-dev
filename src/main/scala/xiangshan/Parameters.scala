@@ -312,7 +312,7 @@ case class XSCoreParameters
   ),
   tmutlbParameters: TLBParameters = TLBParameters(
     name = "tmutlb",
-    NWays = 48,
+    NWays = 16,
     outReplace = false,
     partialStaticPMP = true,
     outsideRecvFlush = true,

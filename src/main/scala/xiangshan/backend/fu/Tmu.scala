@@ -26,22 +26,6 @@ trait TmuParams extends HasXSParameter {
   val row_data_w : Int = numTcolsb * 8
   val row_addr_offset_w = log2Ceil(row_data_w)
 
-  // row walk pointer
-  case class RowWalkPtr(max: Int = numTrows) {
-    private val ptr = RegInit(0.U(log2Ceil(max + 1).W))
-    def value: UInt = ptr(row_idx_w-1, 0)
-    def update(): Unit = {
-      ptr := Mux(overflow, ptr, ptr + 1.U)
-    }
-    def overflow: Bool = ptr === (max + 1).U
-    def ready_go: Bool = ptr === max.U || overflow // ptr = 16 时，第15行的数据已经读出来，可以拉高 out_valid，在下一个上升沿握手
-    def valid:    Bool = !ready_go // ptr = 0~15
-    def reset(): Unit = {
-      ptr := 0.U
-    }
-    def walk_past(i: Int): Bool = value >= i.U
-  }
-
   // TileLink clinet node params
   val tileLSQ_sz = 32
   val tmuClientParameters = TLMasterPortParameters.v1(
@@ -103,10 +87,10 @@ class TmuDataInput(implicit p: Parameters) extends XSBundle with TmuParams {
   def tmmA_sign:   Bool = func(1) === "b1".U
   def tmmB_sign:   Bool = func(0) === "b1".U
 
-  def vaddr_base: UInt = src(0) + ZeroExt(Cat(imm(31, 3), 0.U(3.W)), VAddrBits) // 目标块在内存中的起始虚地址
-  def stride    : UInt = src(1)      // 主轴长度
+  def base_vaddr: UInt = src(0) // 目标块在内存中的起始虚地址
+  def stride    : UInt = src(1) // 主轴长度
   def row_vaddr_vec: Vec[UInt] = VecInit( // 每行的虚拟地址(尽量不要这样使用)
-    (0 until numTrows).scanLeft(vaddr_base) { (vaddr, _) => vaddr + stride }
+    (0 until numTrows).scanLeft(base_vaddr) { (vaddr, _) => vaddr + stride }
   )
 }
 
@@ -253,9 +237,9 @@ class TmuModule (implicit p: Parameters) extends XSModule with TmuParams with Ha
   // for debug
   when(io.in.fire) {
     when(io.in.bits.isTileLS && !io.in.bits.isWrite) {
-      printf(p"[TMU] tileloadd tmm${io.in.bits.tmmC}, vaddr = 0x${Hexadecimal(io.in.bits.vaddr_base)}, stride = 0x${Hexadecimal(io.in.bits.stride)}\n")
+      printf(p"[TMU] tileloadd tmm${io.in.bits.tmmC}, vaddr = 0x${Hexadecimal(io.in.bits.base_vaddr)}, stride = 0x${Hexadecimal(io.in.bits.stride)}\n")
     }.elsewhen(io.in.bits.isTileLS && io.in.bits.isWrite) {
-      printf(p"[TMU] tilestored tmm${io.in.bits.tmmC}, vaddr = 0x${Hexadecimal(io.in.bits.vaddr_base)}, stride = 0x${Hexadecimal(io.in.bits.stride)}\n")
+      printf(p"[TMU] tilestored tmm${io.in.bits.tmmC}, vaddr = 0x${Hexadecimal(io.in.bits.base_vaddr)}, stride = 0x${Hexadecimal(io.in.bits.stride)}\n")
     }.elsewhen(io.in.bits.isTdp) {
       printf(p"[TMU] tdpb??d tmm${io.in.bits.tmmC}, tmm${io.in.bits.tmmA}, tmm${io.in.bits.tmmB}, sign = ${io.in.bits.tmmA_sign}, ${io.in.bits.tmmB_sign}\n")
     }.otherwise {
@@ -297,7 +281,7 @@ class TmuModule (implicit p: Parameters) extends XSModule with TmuParams with Ha
   // connect to tlsUnit
   tlsUnit.io.tls_in.valid := io.in.fire && io.in.bits.isTileLS
   tlsUnit.io.tls_in.bits.tmm        := io.in.bits.tmmC
-  tlsUnit.io.tls_in.bits.vaddr_base := io.in.bits.vaddr_base
+  tlsUnit.io.tls_in.bits.base_vaddr := io.in.bits.base_vaddr
   tlsUnit.io.tls_in.bits.stride     := io.in.bits.stride
   tlsUnit.io.tls_in.bits.memOp      := io.in.bits.MemOp
 
@@ -349,14 +333,8 @@ trait TDPUnitParams extends TmuParams {
 
   // TDPUnit stage info stored in registers
   case class TmuStageInfo(in_fire: Bool, out_fire: Bool, in_bits: TDPUnitInput) {
-    val valid = RegInit(false.B)
-    when(in_fire) {
-      valid := true.B
-    }.elsewhen(out_fire) {
-      valid := false.B
-    }
-
-    val regs = RegEnable(in_bits, in_fire)
+    val valid = ValidHold(in_fire, out_fire)
+    val regs  = RegEnable(in_bits, in_fire)
   }
 
   object TdpOp {
@@ -365,6 +343,22 @@ trait TDPUnitParams extends TmuParams {
     val busd = "b01".U
     val buud = "b00".U
     def apply() = UInt(2.W)
+  }
+
+  // tile row walk pointer
+  case class RowWalkPtr(max: Int = numTrows) {
+    private val ptr = RegInit(0.U(log2Ceil(max + 1).W))
+    def value: UInt = ptr(row_idx_w-1, 0)
+    def update(): Unit = {
+      ptr := Mux(overflow, ptr, ptr + 1.U)
+    }
+    def overflow: Bool = ptr === (max + 1).U
+    def ready_go: Bool = ptr === max.U || overflow // ptr = 16 时，第15行的数据已经读出来，可以拉高 out_valid，在下一个上升沿握手
+    def valid:    Bool = !ready_go // ptr = 0~15
+    def reset(): Unit = {
+      ptr := 0.U
+    }
+    def walk_past(i: Int): Bool = value >= i.U
   }
 }
 
@@ -546,7 +540,7 @@ class TDPUnit(implicit p: Parameters) extends XSModule with TDPUnitParams {
 ///////////////////////////////////
 // TMU load/store Unit
 ///////////////////////////////////
-trait TileLSUnitParams extends TmuParams with HasDCacheParameters with HasCircularQueuePtrHelper {
+trait TileLSUnitParams extends TmuParams with HasDCacheParameters {
   object MemOp {
     val tldl1 = "b00".U
     val tldl2 = "b01".U
@@ -559,8 +553,8 @@ trait TileLSUnitParams extends TmuParams with HasDCacheParameters with HasCircul
   val sourceIDWidth = log2Ceil(tileLSQ_sz)
 
   val l1TldDataWidth = VLEN
-  val l1TstDataWidth = cfg.blockBytes * 8
-  val l2TldDataWidth = l1BusDataWidth
+  val l1TstDataWidth = cfg.blockBytes * 8 // 64B
+  val l2TldDataWidth = l1BusDataWidth     // 32B
   val l2TldNumBurst = row_data_w / l2TldDataWidth
 
   case class DataTransCnt(numBurst: Int) {
@@ -581,7 +575,7 @@ trait TileLSUnitParams extends TmuParams with HasDCacheParameters with HasCircul
 
 class TileLSUnitInput(implicit p: Parameters) extends XSBundle with TileLSUnitParams {
   val tmm        = UInt(tile_idx_w.W)
-  val vaddr_base = UInt(VAddrBits.W)
+  val base_vaddr = UInt(VAddrBits.W)
   val stride     = UInt(XLEN.W)
   val memOp      = MemOp()
 }
@@ -635,7 +629,7 @@ class TmuMemBus (implicit p: Parameters) extends XSBundle with TileLSUnitParams 
 
 
 // TMU laod/store Unit
-class TileLSUnit (implicit p: Parameters) extends XSModule with TileLSUnitParams {
+class TileLSUnit (implicit p: Parameters) extends XSModule with TileLSUnitParams with HasCircularQueuePtrHelper{
   val io = IO(new Bundle {
     val tls_in  = Flipped(Decoupled(new TileLSUnitInput))
     val done    = Output(Bool())
@@ -673,28 +667,21 @@ class TileLSUnit (implicit p: Parameters) extends XSModule with TileLSUnitParams
     entry
   }
 
-  val tlb_entry    = ToTmuLSQEntry(tlb_ptr)
+  
   val l2CReq_entry = ToTmuLSQEntry(mem_ptr)
   val deq_entry    = ToTmuLSQEntry(out_ptr)
   val dCReq_entry  = Mux(deq_entry.dCReqNeedReplay, deq_entry, ToTmuLSQEntry(mem_ptr))
 
   // tls_in buffer
-  val tls_buf = RegEnable(io.tls_in.bits, io.tls_in.fire)
-  val tls_buf_valid = RegInit(false.B)
   val lsq_enq_cnt = RegInit(0.U(row_idx_w.W))
+  val enq_enable  = Wire(Bool())
+  val tls_buf       = RegEnable(io.tls_in.bits, io.tls_in.fire)
+  val tls_buf_valid = ValidHold(io.tls_in.fire, enq_enable && (lsq_enq_cnt === (numTrows - 1).U))
 
-  val enq_enable = !isFull(in_ptr, out_ptr) && tls_buf_valid
-  when(io.tls_in.fire) {
-    tls_buf_valid := true.B
-  }.elsewhen(enq_enable && lsq_enq_cnt === (numTrows - 1).U){
-    tls_buf_valid := false.B
-  }
-  
+  enq_enable := !isFull(in_ptr, out_ptr) && tls_buf_valid
   when(enq_enable) {
     lsq_enq_cnt := lsq_enq_cnt + 1.U
-  }
-  when(enq_enable) {
-    tls_buf.vaddr_base := tls_buf.vaddr_base + tls_buf.stride
+    tls_buf.base_vaddr := tls_buf.base_vaddr + tls_buf.stride
   }
 
   // tls_in buffer -> lsq
@@ -706,46 +693,38 @@ class TileLSUnit (implicit p: Parameters) extends XSModule with TileLSUnitParams
       ctrl_queue(i).tmm   := tls_buf.tmm
       ctrl_queue(i).row   := lsq_enq_cnt
       ctrl_queue(i).memOp := tls_buf.memOp
-      ctrl_queue(i).vaddr := tls_buf.vaddr_base
+      ctrl_queue(i).vaddr := tls_buf.base_vaddr
     }
   }
 
   io.tls_in.ready := !tls_buf_valid
 
-  // tlb req and resp
-  val tlbReqFlag = RegInit(true.B)
-  when(io.tlb.resp.fire && !io.tlb.resp.bits.miss) {
-    tlbReqFlag := true.B
-  }.elsewhen(io.tlb.req.fire) {
-    tlbReqFlag := false.B
-  }
-  
-  io.tlb.req.valid              := tlbReqFlag && tlb_entry.tlbReqValid// blocked tlb
-  io.tlb.req.bits.cmd           := Mux(MemOp.isLoad(tlb_entry.memOp), TlbCmd.read, TlbCmd.write)
-  io.tlb.req.bits.vaddr         := tlb_entry.vaddr
-  io.tlb.req.bits.fullva        := DontCare
+  // tlb request
+  val tlb_ptr_last = tlb_ptr - 1.U
+  val tlbMiss = io.tlb.resp.valid && io.tlb.resp.bits.miss
+  val tlbHit  = io.tlb.resp.valid && !io.tlb.resp.bits.miss
+  val tlb_req_entry = Mux(tlbMiss, ToTmuLSQEntry(tlb_ptr_last), ToTmuLSQEntry(tlb_ptr))
+
+  io.tlb.req.valid := tlb_req_entry.tlbReqValid // blocked tlb
+  io.tlb.req.bits  := DontCare
+  io.tlb.req.bits.cmd           := Mux(MemOp.isLoad(tlb_req_entry.memOp), TlbCmd.read, TlbCmd.write)
+  io.tlb.req.bits.vaddr         := tlb_req_entry.vaddr
+  io.tlb.req.bits.size          := log2Ceil(numTcolsb).U // 2^size = DataWidth
   io.tlb.req.bits.checkfullva   := false.B
   io.tlb.req.bits.hyperinst     := false.B
   io.tlb.req.bits.hlvx          := false.B
-  io.tlb.req.bits.size          := log2Ceil(numTcolsb).U // 2^size = DataWidth
   io.tlb.req.bits.kill          := false.B
-  io.tlb.req.bits.memidx.is_ld  := MemOp.isLoad(tlb_entry.memOp)
-  io.tlb.req.bits.memidx.is_st  := MemOp.isStore(tlb_entry.memOp)
-  io.tlb.req.bits.memidx.idx    := 0.U
   io.tlb.req.bits.isPrefetch    := false.B
   io.tlb.req.bits.no_translate  := false.B
-  io.tlb.req.bits.pmp_addr      := RegEnable(io.tlb.resp.bits.paddr(0), io.tlb.resp.fire) // pmp check not activated in tmu
-  io.tlb.req.bits.debug         := DontCare
+  io.tlb.req_kill               := false.B
 
-  io.tlb.req_kill := false.B
   io.tlb.resp.ready := true.B // always ready to receive tlb response
-  // tlb_ptr 指针的更新
-  val tlbRespDone = io.tlb.resp.fire && !io.tlb.resp.bits.miss
-  when(tlbRespDone) {
-    tlb_ptr := tlb_ptr + 1.U
+  when(io.tlb.req.fire && !tlbMiss) {
+    tlb_ptr := tlb_ptr + 1.U // tlb_ptr 指针的更新
   }
+
   for(i <- 0 until tileLSQ_sz) {
-    when(tlbRespDone && tlb_ptr.value === i.U) {
+    when(tlbHit && tlb_ptr_last.value === i.U) {
       paddr_queue(i) := io.tlb.resp.bits.paddr(0)
     }
   }
@@ -832,7 +811,7 @@ class TileLSUnit (implicit p: Parameters) extends XSModule with TileLSUnitParams
         state_queue(i) := Mux(enq_enable && in_ptr.value === i.U, LSQState.s_wait_paddr, LSQState.s_idle)
       }
       is(LSQState.s_wait_paddr) {
-        state_queue(i) := Mux(tlbRespDone && tlb_ptr.value === i.U, LSQState.s_wait_req, LSQState.s_wait_paddr)
+        state_queue(i) := Mux(tlbHit && tlb_ptr_last.value === i.U, LSQState.s_wait_req, LSQState.s_wait_paddr)
       }
       is(LSQState.s_wait_req) {
         // state_queue(i) := Mux(l2CRespDone && io.memBus.resp.bits.source === i.U, LSQState.s_done, LSQState.s_l2cacheR)
