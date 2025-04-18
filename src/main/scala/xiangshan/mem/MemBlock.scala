@@ -92,8 +92,8 @@ class ooo_to_mem(implicit p: Parameters) extends MemBlockBundle {
   val sfence = Input(new SfenceBundle)
   val tlbCsr = Input(new TlbCsrBundle)
   val tmuTlb = Flipped(new TlbRequestIO()) // for tmu
-  // val tmuSbuffer = Vec(EnsbufferWidth, Flipped(Decoupled(new DCacheWordReqWithVaddrAndPfFlag)))
-  val tmuDcache = new DCacheToSbufferIO
+  val tmuSbuffer = Flipped(Decoupled(new DCacheLineReq))
+  // val tmuDcache = new DCacheToSbufferIO
   val lsqio = new Bundle {
     val lcommit = Input(UInt(log2Up(CommitWidth + 1).W))
     val scommit = Input(UInt(log2Up(CommitWidth + 1).W))
@@ -1513,7 +1513,8 @@ class MemBlockInlinedImp(outer: MemBlockInlined) extends LazyModuleImp(outer)
   lsq.io.tl_d_channel <> dcache.io.lsu.tl_d_channel
 
 
-  lsq.io.sbuffer <> sbuffer.io.in
+  lsq.io.sbuffer           <> sbuffer.io.in
+  io.ooo_to_mem.tmuSbuffer <> sbuffer.io.tmu_in
   sbuffer.io.in(0).valid := lsq.io.sbuffer(0).valid || vSegmentUnit.io.sbuffer.valid
   sbuffer.io.in(0).bits  := Mux1H(Seq(
     vSegmentUnit.io.sbuffer.valid -> vSegmentUnit.io.sbuffer.bits,
@@ -1721,12 +1722,7 @@ class MemBlockInlinedImp(outer: MemBlockInlined) extends LazyModuleImp(outer)
 
   // Sbuffer
   sbuffer.io.csrCtrl    <> csrCtrl
-  // sbuffer.io.dcache 与 tmu.io.dcache 仲裁
-  val sbufTmuArbiter = Module(new SbufferTmuArbiter)
-  sbufTmuArbiter.io.sbuffer <> sbuffer.io.dcache
-  sbufTmuArbiter.io.tmu     <> io.ooo_to_mem.tmuDcache
-  sbufTmuArbiter.io.out     <> dcache.io.lsu.store
-
+  sbuffer.io.dcache     <> dcache.io.lsu.store
   sbuffer.io.memSetPattenDetected := dcache.io.memSetPattenDetected
   sbuffer.io.force_write <> lsq.io.force_write
   // flush sbuffer

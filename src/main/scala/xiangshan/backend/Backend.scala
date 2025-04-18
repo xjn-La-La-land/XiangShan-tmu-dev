@@ -55,8 +55,7 @@ import scala.collection.mutable
 import xiangshan.cache.mmu.TlbRequestIO
 import freechips.rocketchip.tilelink.TLClientNode
 import xiangshan.backend.fu.{TmuParams,TmuMemBus}
-import xiangshan.cache.DCacheWordReqWithVaddrAndPfFlag
-import xiangshan.cache.DCacheToSbufferIO
+import xiangshan.cache.DCacheLineReq
 
 class Backend(val params: BackendParams)(implicit p: Parameters) extends LazyModule
   with HasXSParameter {
@@ -631,7 +630,7 @@ class BackendInlinedImp(override val wrapper: BackendInlined)(implicit p: Parame
 
   // tmu memory io connection
   io.mem.tmuTlb.get <> intExuBlock.io.tmuTlb.get
-  io.mem.tmuDcache.get <> intExuBlock.io.tmuDcache.get
+  io.mem.tmuSbuffer.get <> intExuBlock.io.tmuSbuffer.get
   intExuBlock.io.tmuMemBus.get.ConnectClientNode(wrapper.tmu_node)
 
   // to fpExuBlock
@@ -1027,8 +1026,8 @@ class BackendMemIO(implicit p: Parameters, params: BackendParams) extends XSBund
   val isVlsException = Output(Bool())
 
   val tmuTlb = Option.when(params.hasTmu)(new TlbRequestIO())
-  // val tmuSbuffer = Option.when(params.hasTmu)(Vec(EnsbufferWidth, Decoupled(new DCacheWordReqWithVaddrAndPfFlag)))
-  val tmuDcache = Option.when(params.hasTmu)(Flipped(new DCacheToSbufferIO))
+  val tmuSbuffer = Option.when(params.hasTmu)(Decoupled(new DCacheLineReq))
+  // val tmuDcache = Option.when(params.hasTmu)(Flipped(new DCacheToSbufferIO))
 
   // ATTENTION: The issue ports' sequence order should be the same as IQs' deq config
   private [backend] def issueUops: Seq[DecoupledIO[MemExuInput]] = {

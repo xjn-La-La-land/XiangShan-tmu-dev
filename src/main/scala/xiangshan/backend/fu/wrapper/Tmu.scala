@@ -12,9 +12,9 @@ import freechips.rocketchip.diplomacy.LazyModule
 class Tmu (cfg: FuConfig)(implicit p: Parameters) extends FuncUnit(cfg) {
 
   private val tmu = Module(new TmuModule)
-  io.tmuTlb.get    <> tmu.io.tlb
-  io.tmuMemBus.get <> tmu.io.memBus
-  io.tmuDcache.get <> tmu.io.dcache
+  io.tmuTlb.get     <> tmu.io.tlb
+  io.tmuMemBus.get  <> tmu.io.memBus
+  io.tmuSbuffer.get <> tmu.io.sbuffer
 
   private val src    = io.in.bits.data.src.take(2) // 2 src
   private val imm    = io.in.bits.data.imm(31, 0)

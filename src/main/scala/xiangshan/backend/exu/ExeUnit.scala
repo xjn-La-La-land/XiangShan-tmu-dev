@@ -33,8 +33,7 @@ import xiangshan.backend.fu.wrapper.{CSRInput, CSRToDecode, Tmu}
 import xiangshan.cache.mmu.TlbRequestIO
 import xiangshan.backend.fu.{TmuParams,TmuMemBus}
 import freechips.rocketchip.tilelink.TLClientNode
-import xiangshan.cache.DCacheWordReqWithVaddrAndPfFlag
-import xiangshan.cache.DCacheToSbufferIO
+import xiangshan.cache.DCacheLineReq
 
 class ExeUnitIO(params: ExeUnitParams)(implicit p: Parameters) extends XSBundle with TmuParams {
   val flush = Flipped(ValidIO(new Redirect()))
@@ -53,8 +52,8 @@ class ExeUnitIO(params: ExeUnitParams)(implicit p: Parameters) extends XSBundle 
   // tmu memory io
   val tmuTlb    = Option.when(params.hasTmuFu)(new TlbRequestIO())
   val tmuMemBus = Option.when(params.hasTmuFu)(new TmuMemBus)
-  // val tmuSbuffer = Option.when(params.hasTmuFu)(Vec(EnsbufferWidth, Decoupled(new DCacheWordReqWithVaddrAndPfFlag)))
-  val tmuDcache = Option.when(params.hasTmuFu)(Flipped(new DCacheToSbufferIO))
+  val tmuSbuffer = Option.when(params.hasTmuFu)(Decoupled(new DCacheLineReq))
+  // val tmuDcache = Option.when(params.hasTmuFu)(Flipped(new DCacheToSbufferIO))
 }
 
 class ExeUnit(val exuParams: ExeUnitParams)(implicit p: Parameters) extends LazyModule with TmuParams {
@@ -423,7 +422,7 @@ class ExeUnitImp(
     val tmu = funcUnits.filter(_.isInstanceOf[Tmu]).head.asInstanceOf[Tmu]
     io.tmuTlb.get <> tmu.io.tmuTlb.get
     io.tmuMemBus.get <> tmu.io.tmuMemBus.get
-    io.tmuDcache.get <> tmu.io.tmuDcache.get
+    io.tmuSbuffer.get <> tmu.io.tmuSbuffer.get
   }
 
 }
