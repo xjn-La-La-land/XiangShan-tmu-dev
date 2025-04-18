@@ -174,8 +174,8 @@ class SbufferData(implicit p: Parameters) extends XSModule with HasSbufferConst 
     line_write_buffer_mask.suggestName("tmu_line_write_buffer_mask_"+line)
     for(i <- 0 until CacheLineBytes) {
       when(sbuffer_in_s2_line_wen && line_write_buffer_mask(i)){
-        val word = i / CacheLineVWords
-        val byte = i % CacheLineVWords
+        val word = i / VDataBytes
+        val byte = i % VDataBytes
         data(line)(word)(byte) := line_write_buffer_data(i*8+7, i*8)
         mask(line)(word)(byte) := true.B
       }
