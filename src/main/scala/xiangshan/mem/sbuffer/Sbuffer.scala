@@ -175,8 +175,8 @@ class SbufferData(implicit p: Parameters) extends XSModule with HasSbufferConst 
     for(i <- 0 until CacheLineBytes) {
       when(sbuffer_in_s2_line_wen && line_write_buffer_mask(i)){
         val word = i / CacheLineVWords
-        val byte = 1 % CacheLineVWords
-        data(line)(word)(byte) := line_write_buffer_data(byte*8+7, byte*8)
+        val byte = i % CacheLineVWords
+        data(line)(word)(byte) := line_write_buffer_data(i*8+7, i*8)
         mask(line)(word)(byte) := true.B
       }
         
