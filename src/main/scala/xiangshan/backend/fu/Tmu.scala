@@ -161,7 +161,8 @@ class TileRegFile (implicit val p: Parameters) extends Module with TmuParams {
   }
 
   io.readPorts.foreach(readPort => {
-    readPort.rdata := tiles_rdatas(RegNext(readPort.rtile)) // keep one cycle read delay
+    val rtile_buf = RegEnable(readPort.rtile, readPort.ren)
+    readPort.rdata := tiles_rdatas(rtile_buf) // hold read data until next ren!
   })
 }
 
@@ -254,7 +255,7 @@ class TmuInstBuf (implicit p: Parameters) extends XSModule with TmuParams with H
 
 // HINT: Tile Matrix Unit
 // Tile Matrix Unit is a special functional unit that is used to accelerate matrix operations.
-class TmuModule (implicit p: Parameters) extends XSModule with TmuParams with HasCircularQueuePtrHelper {
+class TmuModule (implicit p: Parameters) extends XSModule with TmuParams {
   val io = IO(new Bundle() {
     // Exu interface
     val in  = Flipped(Decoupled(new TmuDataInput))
