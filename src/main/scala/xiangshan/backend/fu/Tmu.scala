@@ -26,6 +26,9 @@ trait TmuParams extends HasXSParameter {
   val row_data_w : Int = numTcolsb * 8
   val row_addr_offset_w = log2Ceil(row_data_w)
 
+  val num_tilerf_readPort  = 4
+  val num_tilerf_writePort = 2
+
   // TileLink clinet node params
   val tileLSQ_sz = 32
   val tmuClientParameters = TLMasterPortParameters.v1(
@@ -130,6 +133,36 @@ class TileReg (implicit val p: Parameters) extends Module with TmuParams {
   tile.io.w.req.valid       := io.wen
   tile.io.w.req.bits.setIdx := io.wrow
   tile.io.w.req.bits.data   := VecInit(io.wdata)
+}
+
+class TileRegFile (implicit val p: Parameters) extends Module with TmuParams {
+  val io = IO(new Bundle {
+    val readPorts  = Flipped(Vec(num_tilerf_readPort, new TilesReadPort))
+    val writePorts = Flipped(Vec(num_tilerf_writePort, new TilesWritePort))
+  })
+
+  val tiles = Seq.fill(numTmm)(Module(new TileReg))
+  val tiles_rdatas = VecInit(tiles.map(_.io.rdata))
+
+  // connect to tiles
+  for (i <- 0 until numTmm) {
+    val ren_vec = io.readPorts.map(readPort => {
+      readPort.rtile === i.U && readPort.ren
+    })
+    tiles(i).io.ren   := ParallelOR(ren_vec)
+    tiles(i).io.rrow  := ParallelPriorityMux(ren_vec, io.readPorts.map(_.rrow))
+
+    val wen_vec = io.writePorts.map(writePort => {
+      writePort.wtile === i.U && writePort.wen
+    })
+    tiles(i).io.wen   := ParallelOR(wen_vec)
+    tiles(i).io.wrow  := ParallelPriorityMux(wen_vec, io.writePorts.map(_.wrow))
+    tiles(i).io.wdata := ParallelPriorityMux(wen_vec, io.writePorts.map(_.wdata))
+  }
+
+  io.readPorts.foreach(readPort => {
+    readPort.rdata := tiles_rdatas(RegNext(readPort.rtile)) // keep one cycle read delay
+  })
 }
 
 
@@ -249,8 +282,7 @@ class TmuModule (implicit p: Parameters) extends XSModule with TmuParams with Ha
 
 
   // tile register file
-  val tiles = Seq.fill(numTmm)(Module(new TileReg))
-  val tiles_rdatas = VecInit(tiles.map(_.io.rdata))
+  val tiles = Module(new TileRegFile)
 
   // submodules
   val tdpUnit = Module(new TDPUnit)
@@ -285,6 +317,7 @@ class TmuModule (implicit p: Parameters) extends XSModule with TmuParams with Ha
   tlsQueue.io.tls_in.bits.stride     := io.in.bits.stride
   tlsQueue.io.tls_in.bits.memOp      := io.in.bits.MemOp
 
+  // connect to tiles
   val readPorts = Seq(
     tlsQueue.io.tileData.tmmRead,
     tdpUnit.io.tileData.tmmCRead,
@@ -296,25 +329,8 @@ class TmuModule (implicit p: Parameters) extends XSModule with TmuParams with Ha
     tdpUnit.io.tileData.tmmCWrite,
   )
 
-  // connect to tiles
-  for (i <- 0 until numTmm) {
-    val ren_vec = readPorts.map(readPort => {
-      readPort.rtile === i.U && readPort.ren
-    })
-    tiles(i).io.ren   := ParallelOR(ren_vec)
-    tiles(i).io.rrow  := ParallelPriorityMux(ren_vec, readPorts.map(_.rrow))
-
-    val wen_vec = writePorts.map(writePort => {
-      writePort.wtile === i.U && writePort.wen
-    })
-    tiles(i).io.wen   := ParallelOR(wen_vec)
-    tiles(i).io.wrow  := ParallelPriorityMux(wen_vec, writePorts.map(_.wrow))
-    tiles(i).io.wdata := ParallelPriorityMux(wen_vec, writePorts.map(_.wdata))
-  }
-  
-  readPorts.foreach(readPort => {
-    readPort.rdata := tiles_rdatas(readPort.rtile)
-  })
+  tiles.io.readPorts  <> readPorts
+  tiles.io.writePorts <> writePorts
 
   // connect to tlb, memBus, sbuffer
   tlsQueue.io.tlb <> io.tlb
