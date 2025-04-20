@@ -762,6 +762,8 @@ class TileLSQueue (implicit p: Parameters) extends XSModule with TileLSQParams w
   // l2-cache load req
   val l2CReq_entry = (0 until numL2CReadPort).map(i => ToTmuLSQEntry(l2CReq_ptr(i)))
   val ldu = Module(new TmuL2CLoadUnit)
+  ldu.io.memBus   <> io.memBus
+  ldu.io.tmmWrite <> io.tileData.tmmWrite
 
   val step = numL2CReadPort
   for(i <- 0 until numL2CReadPort) {
@@ -780,7 +782,6 @@ class TileLSQueue (implicit p: Parameters) extends XSModule with TileLSQParams w
   // l2-cache load resp
   for(i <- 0 until numL2CReadPort) {
     ldu.io.tlRespEntry(i) := ToTmuLSQEntry(ldu.io.tlRespId(i))
-    ldu.io.tmmWrite(i) <> io.tileData.tmmWrite(i)
   }
 
   // l1-dcache write(to sbuffer)
