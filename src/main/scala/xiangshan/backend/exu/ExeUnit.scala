@@ -51,7 +51,7 @@ class ExeUnitIO(params: ExeUnitParams)(implicit p: Parameters) extends XSBundle 
   val instrAddrTransType = Option.when(params.hasJmpFu || params.hasBrhFu)(Input(new AddrTransType))
   // tmu memory io
   val tmuTlb    = Option.when(params.hasTmuFu)(new TlbRequestIO())
-  val tmuMemBus = Option.when(params.hasTmuFu)(new TmuMemBus)
+  val tmuMemBus = Option.when(params.hasTmuFu)(Vec(numL2CReadPort, new TmuMemBus))
   val tmuSbuffer = Option.when(params.hasTmuFu)(Decoupled(new DCacheLineReq))
   // val tmuDcache = Option.when(params.hasTmuFu)(Flipped(new DCacheToSbufferIO))
 }

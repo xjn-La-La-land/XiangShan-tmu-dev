@@ -98,7 +98,7 @@ class ExuBlockIO(implicit p: Parameters, params: SchdBlockParams) extends XSBund
 
   // tmu memory io
   val tmuTlb     = Option.when(params.hasTmu)(new TlbRequestIO())
-  val tmuMemBus  = Option.when(params.hasTmu)(new TmuMemBus)
+  val tmuMemBus  = Option.when(params.hasTmu)(Vec(numL2CReadPort, new TmuMemBus))
   val tmuSbuffer = Option.when(params.hasTmu)(Decoupled(new DCacheLineReq))
   // val tmuDcache  = Option.when(params.hasTmu)(Flipped(new DCacheToSbufferIO))
 }

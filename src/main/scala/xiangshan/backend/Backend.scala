@@ -192,7 +192,7 @@ class BackendInlined(val params: BackendParams)(implicit p: Parameters) extends 
   val vfExuBlock = params.vfSchdParams.map(x => LazyModule(new ExuBlock(x)))
   val wbFuBusyTable = LazyModule(new WbFuBusyTable(params))
 
-  val tmu_node = TLClientNode(Seq(tmuClientParameters))
+  val tmu_nodes = Seq.fill(numL2CReadPort)(TLClientNode(Seq(tmuClientParameters)))
 
   lazy val module = new BackendInlinedImp(this)
 }
@@ -631,7 +631,9 @@ class BackendInlinedImp(override val wrapper: BackendInlined)(implicit p: Parame
   // tmu memory io connection
   io.mem.tmuTlb.get <> intExuBlock.io.tmuTlb.get
   io.mem.tmuSbuffer.get <> intExuBlock.io.tmuSbuffer.get
-  intExuBlock.io.tmuMemBus.get.ConnectClientNode(wrapper.tmu_node)
+  (intExuBlock.io.tmuMemBus.get zip wrapper.tmu_nodes).foreach{ case(memBus, node) =>
+    memBus.ConnectClientNode(node)
+  }
 
   // to fpExuBlock
   fpExuBlock.io.flush := ctrlBlock.io.toExuBlock.flush

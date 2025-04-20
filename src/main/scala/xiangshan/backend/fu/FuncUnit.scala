@@ -103,7 +103,7 @@ class FuncUnitIO(cfg: FuConfig)(implicit p: Parameters) extends XSBundle with Tm
   val instrAddrTransType = Option.when(cfg.isJmp || cfg.isBrh)(Input(new AddrTransType))
 
   val tmuTlb    = OptionWrapper(cfg.isTmu, new TlbRequestIO())
-  val tmuMemBus = OptionWrapper(cfg.isTmu, new TmuMemBus)
+  val tmuMemBus = OptionWrapper(cfg.isTmu, Vec(numL2CReadPort, new TmuMemBus))
   val tmuSbuffer = OptionWrapper(cfg.isTmu, Decoupled(new DCacheLineReq))
   // val tmuDcache = OptionWrapper(cfg.isTmu, Flipped(new DCacheToSbufferIO))
 }
