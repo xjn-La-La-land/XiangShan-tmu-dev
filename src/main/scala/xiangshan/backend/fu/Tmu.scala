@@ -772,9 +772,9 @@ class TileLSQueue (implicit p: Parameters) extends XSModule with TileLSQParams w
   }
 
   for(i <- 0 until numL2CReadPort) {
-    when(l2CReq_ptr(i).fit(i, step) && ldu.io.tlReqEntry(i).fire) {
+    when(ldu.io.tlReqEntry(i).fire) {
       l2CReq_ptr(i) := l2CReq_ptr(i) + step.U
-    }.elsewhen(!l2CReq_ptr(i).fit(i, step) || l2CReq_entry(i).sbufWriteValid) {
+    }.elsewhen(isAfter(tlb_ptr, l2CReq_ptr(i)) && !l2CReq_entry(i).l2CReqValid || !l2CReq_ptr(i).fit(i, step)) {
       l2CReq_ptr(i) := l2CReq_ptr(i) + 1.U
     }
   }
@@ -798,7 +798,7 @@ class TileLSQueue (implicit p: Parameters) extends XSModule with TileLSQParams w
   stu.io.tmmRead <> io.tileData.tmmRead
   stu.io.sbuffer <> io.sbuffer
   
-  when(stu.io.sbufWEntry.fire || sbufW_entry.l2CReqValid) {
+  when(stu.io.sbufWEntry.fire || isAfter(tlb_ptr, sbufW_ptr) && !sbufW_entry.sbufWriteValid) {
     sbufW_ptr := sbufW_ptr + 1.U
   }
   
