@@ -113,8 +113,6 @@ class TilesWritePort (implicit p: Parameters) extends XSBundle with TmuParams {
   val wrow  = Output(UInt(row_idx_w.W))
   val wdata = Output(UInt(row_data_w.W))
   val wmask = Output(UInt(2.W)) // 32B * 2
-
-  wmask := WireInit(Fill(2, true.B))
 }
 
 
@@ -546,6 +544,7 @@ class TDPUnit(implicit p: Parameters) extends XSModule with TDPUnitParams {
   io.tileData.tmmCWrite.wtile := s2_info.regs.tmmC
   io.tileData.tmmCWrite.wrow  := s2_row_walk_ptr.value
   io.tileData.tmmCWrite.wdata := DPAMatrixPop
+  io.tileData.tmmCWrite.wmask := Fill(2, 1.U(1.W))
 
   s0_stall := s0_ren.zip(s1_ren).map(r => r._1 && r._2).reduce(_ || _) || // s0 and s1 read the same tile
               s0_ren.zip(s2_wen).map(r => r._1 && r._2).reduce(_ || _)    // s0 read and s2 write the same tile
