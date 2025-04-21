@@ -42,7 +42,7 @@ trait TmuParams extends HasXSParameter {
   val tlsInstBuf_sz = 3 // tlsQueue 能容纳的最大指令数量+1
   class InstBufPtr (size: Int)(implicit p: Parameters) extends CircularQueuePtr[InstBufPtr](p => size)
 
-  val numL2CReadPort = row_data_w/l1BusDataWidth // l2Cache read做成双端口,将数据吞吐提高到64B
+  val numL2CReadPort = 2 // l2Cache read做成双端口,将数据吞吐提高到64B
 
   case class InstBufTemplate (size: Int) extends HasCircularQueuePtrHelper {
     val info  = Reg(Vec(size, new TmuDataInput))
@@ -112,7 +112,6 @@ class TilesWritePort (implicit p: Parameters) extends XSBundle with TmuParams {
   val wtile = Output(UInt(tile_idx_w.W))
   val wrow  = Output(UInt(row_idx_w.W))
   val wdata = Output(UInt(row_data_w.W))
-  val wmask = Output(UInt(2.W)) // 32B * 2
 }
 
 
@@ -127,17 +126,15 @@ class TileReg (implicit val p: Parameters) extends Module with TmuParams {
     val wrow  = Input(UInt(row_idx_w.W))
     val wen   = Input(Bool())
     val wdata = Input(UInt(row_data_w.W))
-    val wmask = Input(UInt(2.W)) // 32B * 2
   })
 
-  private val tile = Module(new SRAMTemplate(UInt((row_data_w/2).W), set = numTrows, way = 2, withClockGate = true))
+  private val tile = Module(new SRAMTemplate(UInt(row_data_w.W), set = numTrows, withClockGate = true))
   tile.io.r.req.valid       := io.ren
   tile.io.r.req.bits.setIdx := io.rrow
-  io.rdata                  := tile.io.r.resp.data.asUInt
+  io.rdata                  := tile.io.r.resp.data(0)
   tile.io.w.req.valid       := io.wen
   tile.io.w.req.bits.setIdx := io.wrow
-  tile.io.w.req.bits.data   := VecInit(Seq.tabulate(2)(i => io.wdata((i+1)*row_data_w/2-1, i*row_data_w/2)))
-  tile.io.w.req.bits.waymask.get := io.wmask
+  tile.io.w.req.bits.data   := VecInit(io.wdata)
 }
 
 class TileRegFile (implicit val p: Parameters) extends Module with TmuParams {
@@ -163,7 +160,6 @@ class TileRegFile (implicit val p: Parameters) extends Module with TmuParams {
     tiles(i).io.wen   := ParallelOR(wen_vec)
     tiles(i).io.wrow  := ParallelPriorityMux(wen_vec, io.writePorts.map(_.wrow))
     tiles(i).io.wdata := ParallelPriorityMux(wen_vec, io.writePorts.map(_.wdata))
-    tiles(i).io.wmask := ParallelPriorityMux(wen_vec, io.writePorts.map(_.wmask))
   }
 
   io.readPorts.foreach(readPort => {
@@ -544,7 +540,6 @@ class TDPUnit(implicit p: Parameters) extends XSModule with TDPUnitParams {
   io.tileData.tmmCWrite.wtile := s2_info.regs.tmmC
   io.tileData.tmmCWrite.wrow  := s2_row_walk_ptr.value
   io.tileData.tmmCWrite.wdata := DPAMatrixPop
-  io.tileData.tmmCWrite.wmask := Fill(2, 1.U(1.W))
 
   s0_stall := s0_ren.zip(s1_ren).map(r => r._1 && r._2).reduce(_ || _) || // s0 and s1 read the same tile
               s0_ren.zip(s2_wen).map(r => r._1 && r._2).reduce(_ || _)    // s0 read and s2 write the same tile
@@ -619,7 +614,6 @@ class TileLSQEntry(implicit p: Parameters) extends XSBundle with TileLSQParams {
   def tlbReqValid: Bool = state === LSQState.s_wait_paddr
   def l2CReqValid: Bool = state === LSQState.s_wait_req && MemOp.isLoad(memOp)
   def sbufWriteValid: Bool = state === LSQState.s_wait_req && MemOp.isStore(memOp)
-  def l2CReqPaddrVec: Vec[UInt] = VecInit((0 until numL2CReadPort).map(i => paddr + (i * l2TldDataWidth).U))
 }
 
 class TileLSUnitToTiles(implicit val p: Parameters) extends Bundle with TileLSQParams {
@@ -678,11 +672,10 @@ class TileLSQueue (implicit p: Parameters) extends XSModule with TileLSQParams w
   val state_queue = RegInit(VecInit.fill(tileLSQ_sz)(LSQState.s_idle))
   val vaddr_queue = Reg(Vec(tileLSQ_sz, UInt(VAddrBits.W)))
   val paddr_queue = Reg(Vec(tileLSQ_sz, UInt(PAddrBits.W)))
-  val tlRespCnt_queue = Reg(Vec(tileLSQ_sz, UInt(log2Ceil(numL2CReadPort+1).W))) // l2-cache load response count
 
   val in_ptr     = RegInit(0.U.asTypeOf(new TileLSQPtr)) // 入队指针
   val tlb_ptr    = RegInit(0.U.asTypeOf(new TileLSQPtr)) // 地址转换指针
-  val l2CReq_ptr = RegInit(0.U.asTypeOf(new TileLSQPtr)) // l2-cache load req ptr
+  val l2CReq_ptr = RegInit(VecInit.fill(numL2CReadPort)(0.U.asTypeOf(new TileLSQPtr))) // l2-cache load req ptr
   val sbufW_ptr  = RegInit(0.U.asTypeOf(new TileLSQPtr)) // sbuffer write ptr
   val out_ptr    = RegInit(0.U.asTypeOf(new TileLSQPtr)) // 出队指针
 
@@ -731,7 +724,6 @@ class TileLSQueue (implicit p: Parameters) extends XSModule with TileLSQParams w
       ctrl_queue(i).row   := lsq_enq_cnt
       ctrl_queue(i).memOp := tls_buf.memOp
       vaddr_queue(i)      := tls_buf.base_vaddr
-      tlRespCnt_queue(i)  := 0.U
     }
   }
 
@@ -768,29 +760,28 @@ class TileLSQueue (implicit p: Parameters) extends XSModule with TileLSQParams w
   }
 
   // l2-cache load req
-  val l2CReq_entry = ToTmuLSQEntry(l2CReq_ptr)
+  val l2CReq_entry = (0 until numL2CReadPort).map(i => ToTmuLSQEntry(l2CReq_ptr(i)))
   val ldu = Module(new TmuL2CLoadUnit)
   ldu.io.memBus   <> io.memBus
   ldu.io.tmmWrite <> io.tileData.tmmWrite
-  ldu.io.tlReqEntry.valid := l2CReq_entry.l2CReqValid
-  ldu.io.tlReqEntry.bits  := l2CReq_entry
 
-  when(ldu.io.tlReqEntry.fire || isAfter(tlb_ptr_last, l2CReq_ptr) && !l2CReq_entry.l2CReqValid) {
-    l2CReq_ptr := l2CReq_ptr + 1.U
+  val step = numL2CReadPort
+  for(i <- 0 until numL2CReadPort) {
+    ldu.io.tlReqEntry(i).valid := l2CReq_entry(i).l2CReqValid && l2CReq_ptr(i).fit(i, step)
+    ldu.io.tlReqEntry(i).bits  := l2CReq_entry(i)
+  }
+
+  for(i <- 0 until numL2CReadPort) {
+    when(ldu.io.tlReqEntry(i).fire) {
+      l2CReq_ptr(i) := l2CReq_ptr(i) + step.U
+    }.elsewhen(isAfter(tlb_ptr_last, l2CReq_ptr(i)) && !l2CReq_entry(i).l2CReqValid || !l2CReq_ptr(i).fit(i, step)) {
+      l2CReq_ptr(i) := l2CReq_ptr(i) + 1.U
+    }
   }
 
   // l2-cache load resp
   for(i <- 0 until numL2CReadPort) {
-    ldu.io.tlRespEntry(i) := ToTmuLSQEntry(ldu.io.tlRespId(i).bits)
-  }
-  
-  for(i <- 0 until tileLSQ_sz) {
-    val RespHitVec = VecInit((0 until numL2CReadPort).map(j => ldu.io.tlRespId(j).valid && ldu.io.tlRespId(j).bits === i.U))
-    val RespHit = RespHitVec.asUInt.orR
-    val RespHitTwo = RespHitVec.asUInt.andR // 2 responce chennel hit same line
-    when(RespHit) {
-      tlRespCnt_queue(i) := tlRespCnt_queue(i) + Mux(RespHitTwo, 2.U, 1.U)
-    }
+    ldu.io.tlRespEntry(i) := ToTmuLSQEntry(ldu.io.tlRespId(i))
   }
 
   // l1-dcache write(to sbuffer)
@@ -821,10 +812,12 @@ class TileLSQueue (implicit p: Parameters) extends XSModule with TileLSQParams w
 
 
   def tlReqDone(id: Int): Bool = {
-    ldu.io.tlReqEntry.fire && ldu.io.tlReqEntry.bits.id === id.U
+    val i = id % numL2CReadPort
+    ldu.io.tlReqEntry(i).fire && ldu.io.tlReqEntry(i).bits.id === id.U
   }
   def tlRespDone(id: Int): Bool = {
-    tlRespCnt_queue(id) === l2TldNumBurst.U
+    val i = id % numL2CReadPort
+    ldu.io.tlRespDone(i) && ldu.io.tlRespId(i) === id.U
   }
   def sbufWDone(id: Int): Bool = {
     stu.io.sbufWEntry.fire && stu.io.sbufWEntry.bits.id === id.U
@@ -887,36 +880,37 @@ class TmuStoreUnit(implicit p: Parameters) extends XSModule with TileLSQParams {
 
 class TmuL2CLoadUnit(implicit p: Parameters) extends XSModule with TileLSQParams {
   val io = IO(new Bundle {
-    val tlReqEntry  = Flipped(Decoupled(new TileLSQEntry))
+    val tlReqEntry  = Flipped(Vec(numL2CReadPort, Decoupled(new TileLSQEntry)))
     val memBus      = Vec(numL2CReadPort, new TmuMemBus)
     val tmmWrite    = Vec(numL2CReadPort, new TilesWritePort)
-    val tlRespId    = Vec(numL2CReadPort, Valid(UInt(sourceIDWidth.W)))
+    val tlRespId    = Output(Vec(numL2CReadPort, UInt(sourceIDWidth.W)))
     val tlRespEntry = Flipped(Vec(numL2CReadPort, new TileLSQEntry))
+    val tlRespDone  = Output(Vec(numL2CReadPort, Bool()))
   })
 
-  val memBusFree = Wire(Vec(numL2CReadPort, Bool()))
+  // l2-cache req
   for(i <- 0 until numL2CReadPort) {
-    // l2-cache req
-    val tlReqValid = ValidHold(io.tlReqEntry.fire, io.memBus(i).req.fire) && io.tlReqEntry.valid
-    io.memBus(i).req.valid := tlReqValid
-    io.memBus(i).req.bits.source := io.tlReqEntry.bits.id
-    io.memBus(i).req.bits.paddr  := io.tlReqEntry.bits.l2CReqPaddrVec(i)
-    memBusFree(i) := io.memBus(i).req.fire || !tlReqValid
-  }
-  
-  io.tlReqEntry.ready := memBusFree.asUInt.andR
-
-  for(i <- 0 until numL2CReadPort) {
+    io.memBus(i).req.valid       := io.tlReqEntry(i).valid
+    io.memBus(i).req.bits.source := io.tlReqEntry(i).bits.id
+    io.memBus(i).req.bits.paddr  := io.tlReqEntry(i).bits.paddr
+    io.tlReqEntry(i).ready       := io.memBus(i).req.ready
     // l2-cache resp
     io.memBus(i).resp.ready := true.B // always ready to receive response
-    io.tlRespId(i).valid := io.memBus(i).resp.fire
-    io.tlRespId(i).bits  := io.memBus(i).resp.bits.source
+    io.tlRespId(i) := io.memBus(i).resp.bits.source
+    val tlResp_cnt = DataTransCnt(l2TldNumBurst)
+    val l2Rdata_buf = Reg(Vec(l2TldNumBurst-1, UInt(l2TldDataWidth.W)))
+    when(io.memBus(i).resp.fire) {
+      tlResp_cnt.update()
+      when(!tlResp_cnt.last) {
+        l2Rdata_buf(tlResp_cnt.value) := io.memBus(i).resp.bits.rdata
+      }
+    }
+    io.tlRespDone(i) := io.memBus(i).resp.fire && tlResp_cnt.last // tilelink D channel transfer done
     // write back to tile register
-    io.tmmWrite(i).wen   := io.memBus(i).resp.fire
+    io.tmmWrite(i).wen   := io.tlRespDone(i)
     io.tmmWrite(i).wtile := io.tlRespEntry(i).tmm
     io.tmmWrite(i).wrow  := io.tlRespEntry(i).row
-    io.tmmWrite(i).wdata := Fill(2, io.memBus(i).resp.bits.rdata)
-    io.tmmWrite(i).wmask := UIntToOH(i.U)
+    io.tmmWrite(i).wdata := Cat(io.memBus(i).resp.bits.rdata, l2Rdata_buf.asUInt)
   }
 }
 
