@@ -618,10 +618,10 @@ class TileLSQEntry(implicit p: Parameters) extends XSBundle with TileLSQParams {
   def tlbReqValid: Bool = state === LSQState.s_wait_paddr
   def l2CReqValid: Bool = state === LSQState.s_wait_req && MemOp.isLoad(memOp)
   def sbufWriteValid: Bool = state === LSQState.s_wait_req && MemOp.isStore(memOp)
-  def l2CReqPaddrVec(i: Int): UInt = {
+  def l2CReqPaddrVec: Vec[UInt] = {
     val paddrVec = Wire(Vec(numL2CReadPort, UInt(PAddrBits.W)))
-    paddrVec := VecInit((0 until numL2CReadPort).foldLeft(paddr)((paddr, _) => paddr + l2TldDataWidth.U))
-    paddrVec(i)
+    paddrVec := VecInit((0 until numL2CReadPort).scanLeft(paddr){ (paddr, _) => paddr + l2TldDataWidth.U })
+    paddrVec
   }
 }
 
