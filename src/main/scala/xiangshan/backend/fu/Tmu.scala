@@ -113,6 +113,8 @@ class TilesWritePort (implicit p: Parameters) extends XSBundle with TmuParams {
   val wrow  = Output(UInt(row_idx_w.W))
   val wdata = Output(UInt(row_data_w.W))
   val wmask = Output(UInt(2.W)) // 32B * 2
+
+  wmask := WireInit(Fill(2, true.B))
 }
 
 
