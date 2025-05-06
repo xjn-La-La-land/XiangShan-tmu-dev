@@ -587,10 +587,13 @@ trait TileLSQParams extends TmuParams with HasDCacheParameters {
     def apply() = UInt(s_idle.getWidth.W)
   }
 
-  class TileLSQPtr(implicit p: Parameters) extends CircularQueuePtr[TileLSQPtr](p => tileLSQ_sz) {
-    def fit(i: Int, step: Int) = {
-      require(isPow2(step) && step > 1)
-      value(log2Ceil(step)-1, 0) === i.U
+  class TileLSQPtr(implicit p: Parameters) extends CircularQueuePtr[TileLSQPtr](p => tileLSQ_sz)
+  object TileLSQPtr {
+    def apply(f: Bool, v: UInt): TileLSQPtr = {
+      val ptr = Wire(new TileLSQPtr)
+      ptr.flag  := f
+      ptr.value := v
+      ptr
     }
   }
 }
@@ -675,7 +678,7 @@ class TileLSQueue (implicit p: Parameters) extends XSModule with TileLSQParams w
 
   val in_ptr     = RegInit(0.U.asTypeOf(new TileLSQPtr)) // 入队指针
   val tlb_ptr    = RegInit(0.U.asTypeOf(new TileLSQPtr)) // 地址转换指针
-  val l2CReq_ptr = RegInit(VecInit.fill(numL2CReadPort)(0.U.asTypeOf(new TileLSQPtr))) // l2-cache load req ptr
+  val l2CReq_ptr = RegInit(VecInit.tabulate(numL2CReadPort)(i => TileLSQPtr(false.B, i.U))) // l2-cache load req ptr
   val sbufW_ptr  = RegInit(0.U.asTypeOf(new TileLSQPtr)) // sbuffer write ptr
   val out_ptr    = RegInit(0.U.asTypeOf(new TileLSQPtr)) // 出队指针
 
@@ -767,15 +770,13 @@ class TileLSQueue (implicit p: Parameters) extends XSModule with TileLSQParams w
 
   val step = numL2CReadPort
   for(i <- 0 until numL2CReadPort) {
-    ldu.io.tlReqEntry(i).valid := l2CReq_entry(i).l2CReqValid && l2CReq_ptr(i).fit(i, step)
+    ldu.io.tlReqEntry(i).valid := l2CReq_entry(i).l2CReqValid
     ldu.io.tlReqEntry(i).bits  := l2CReq_entry(i)
   }
 
   for(i <- 0 until numL2CReadPort) {
-    when(ldu.io.tlReqEntry(i).fire) {
+    when(ldu.io.tlReqEntry(i).fire || l2CReq_entry(i).sbufWriteValid) {
       l2CReq_ptr(i) := l2CReq_ptr(i) + step.U
-    }.elsewhen(isAfter(tlb_ptr_last, l2CReq_ptr(i)) && !l2CReq_entry(i).l2CReqValid || !l2CReq_ptr(i).fit(i, step)) {
-      l2CReq_ptr(i) := l2CReq_ptr(i) + 1.U
     }
   }
 
@@ -798,7 +799,7 @@ class TileLSQueue (implicit p: Parameters) extends XSModule with TileLSQParams w
   stu.io.tmmRead <> io.tileData.tmmRead
   stu.io.sbuffer <> io.sbuffer
   
-  when(stu.io.sbufWEntry.fire || isAfter(tlb_ptr_last, sbufW_ptr) && !sbufW_entry.sbufWriteValid) {
+  when(stu.io.sbufWEntry.fire || sbufW_entry.l2CReqValid) {
     sbufW_ptr := sbufW_ptr + 1.U
   }
   
