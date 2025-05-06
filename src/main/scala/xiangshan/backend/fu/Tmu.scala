@@ -627,7 +627,7 @@ class TileLSQEntry(implicit p: Parameters) extends XSBundle with TileLSQParams {
   val vaddr = UInt(VAddrBits.W)
   val memOp = MemOp()
   val paddr = UInt(PAddrBits.W)
-  val state = LSQState()
+  val state = new LSQState
 
   def tlbReqValid: Bool    = state.valid
   def l2CReqValid: Bool    = state.wait_req && MemOp.isLoad(memOp)
