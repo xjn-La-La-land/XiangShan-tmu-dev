@@ -585,13 +585,16 @@ trait TileLSQParams extends TmuParams with HasDCacheParameters {
   class LSQState(implicit p: Parameters) extends XSBundle {
     val valid = Bool()
     val done  = Bool()
+    val tlb_done = Bool()
     val req_done = Bool()
     def reset(): Unit = {
       valid    := false.B
       done     := false.B
+      tlb_done := false.B
       req_done := false.B
     }
-    def wait_req:  Bool = valid && !req_done
+    def wait_tlb:  Bool = valid && !tlb_done
+    def wait_req:  Bool = valid && tlb_done && !req_done
     def wait_resp: Bool = valid && req_done && !done
   }
   object LSQState {
@@ -629,7 +632,7 @@ class TileLSQEntry(implicit p: Parameters) extends XSBundle with TileLSQParams {
   val paddr = UInt(PAddrBits.W)
   val state = new LSQState
 
-  def tlbReqValid: Bool    = state.wait_req
+  def tlbReqValid: Bool    = state.wait_tlb
   def l2CReqValid: Bool    = state.wait_req && MemOp.isLoad(memOp)
   def sbufWriteValid: Bool = state.wait_req && MemOp.isStore(memOp)
 }
@@ -748,10 +751,11 @@ class TileLSQueue (implicit p: Parameters) extends XSModule with TileLSQParams w
   io.tls_in.ready := !tls_buf_valid
 
   // tlb request
-  val tlb_ptr_last = tlb_ptr - 1.U
+  val tlbHit = io.tlb.resp.valid && !io.tlb.resp.bits.miss
   val tlbMiss = io.tlb.resp.valid && io.tlb.resp.bits.miss
-  val tlbHit  = io.tlb.resp.valid && !io.tlb.resp.bits.miss
-  val tlb_req_entry = Mux(tlbMiss, ToTmuLSQEntry(tlb_ptr_last), ToTmuLSQEntry(tlb_ptr)) // blocked tlb access for tmu
+  val tlb_req_ptr  = Mux(tlbMiss, tlb_ptr - 1.U, tlb_ptr)
+  val tlb_resp_ptr = tlb_ptr - 1.U
+  val tlb_req_entry = ToTmuLSQEntry(tlb_req_ptr) // blocked tlb access for tmu
 
   io.tlb.req.valid := tlb_req_entry.tlbReqValid
   io.tlb.req.bits  := DontCare
@@ -772,7 +776,7 @@ class TileLSQueue (implicit p: Parameters) extends XSModule with TileLSQParams w
   }
 
   for(i <- 0 until tileLSQ_sz) {
-    when(tlbHit && tlb_ptr_last.value === i.U) {
+    when(tlbHit && tlb_resp_ptr.value === i.U) {
       paddr_queue(i) := io.tlb.resp.bits.paddr(0)
     }
   }
@@ -791,7 +795,7 @@ class TileLSQueue (implicit p: Parameters) extends XSModule with TileLSQParams w
 
   for(i <- 0 until numL2CReadPort) {
     when((ldu.io.tlReqEntry(i).fire || !l2CReq_entry(i).l2CReqValid) &&
-         (l2CReq_ptr(i) + step.U <= tlb_ptr_last)) {
+         (l2CReq_ptr(i) + step.U <= tlb_resp_ptr)) {
       l2CReq_ptr(i) := l2CReq_ptr(i) + step.U
     }
   }
@@ -816,7 +820,7 @@ class TileLSQueue (implicit p: Parameters) extends XSModule with TileLSQParams w
   stu.io.sbuffer <> io.sbuffer
   
   when((stu.io.sbufWEntry.fire || !sbufW_entry.sbufWriteValid) &&
-       (sbufW_ptr < tlb_ptr_last)) {
+       (sbufW_ptr < tlb_resp_ptr)) {
     sbufW_ptr := sbufW_ptr + 1.U
   }
   
@@ -828,12 +832,14 @@ class TileLSQueue (implicit p: Parameters) extends XSModule with TileLSQParams w
   }
   io.done := deq_enable && deq_entry.row === (numTrows-1).U // last row of tileload/tilestore
 
-
-  def tlReqDone(id: Int): Bool = {
+  def tlbRespDone(id: Int): Bool = {
+    tlbHit && tlb_resp_ptr.value === id.U
+  }
+  def l2CReqDone(id: Int): Bool = {
     val i = id % numL2CReadPort
     ldu.io.tlReqEntry(i).fire && ldu.io.tlReqEntry(i).bits.id === id.U
   }
-  def tlRespDone(id: Int): Bool = {
+  def l2CRespDone(id: Int): Bool = {
     val i = id % numL2CReadPort
     ldu.io.tlRespDone(i) && ldu.io.tlRespId(i) === id.U
   }
@@ -846,10 +852,13 @@ class TileLSQueue (implicit p: Parameters) extends XSModule with TileLSQParams w
     when(enq_enable && in_ptr.value === i.U) {
       state_queue(i).valid := true.B
     }
-    when(tlReqDone(i) || sbufWDone(i)) {
+    when(tlbRespDone(i)) {
+      state_queue(i).tlb_done := true.B
+    }
+    when(l2CReqDone(i) || sbufWDone(i)) {
       state_queue(i).req_done := true.B
     }
-    when(sbufWDone(i) || tlRespDone(i)) {
+    when(sbufWDone(i) || l2CRespDone(i)) {
       state_queue(i).done := true.B
     }
     when(deq_enable && out_ptr.value === i.U) {
