@@ -582,9 +582,24 @@ trait TileLSQParams extends TmuParams with HasDCacheParameters {
     }
     def last: Bool = cnt === (numBurst-1).U
   }
+  class LSQState(implicit p: Parameters) extends XSBundle {
+    val valid = Bool()
+    val done  = Bool()
+    val req_done = Bool()
+    def reset(): Unit = {
+      valid    := false.B
+      done     := false.B
+      req_done := false.B
+    }
+    def wait_req:  Bool = valid && !req_done
+    def wait_resp: Bool = valid && req_done && !done
+  }
   object LSQState {
-    val s_idle :: s_wait_paddr :: s_wait_req :: s_wait_resp :: s_done :: Nil = Enum(5)
-    def apply() = UInt(s_idle.getWidth.W)
+    def apply() = {
+      val state = Wire(new LSQState)
+      state.reset()
+      state
+    }
   }
 
   class TileLSQPtr(implicit p: Parameters) extends CircularQueuePtr[TileLSQPtr](p => tileLSQ_sz)
@@ -614,9 +629,9 @@ class TileLSQEntry(implicit p: Parameters) extends XSBundle with TileLSQParams {
   val paddr = UInt(PAddrBits.W)
   val state = LSQState()
 
-  def tlbReqValid: Bool = state === LSQState.s_wait_paddr
-  def l2CReqValid: Bool = state === LSQState.s_wait_req && MemOp.isLoad(memOp)
-  def sbufWriteValid: Bool = state === LSQState.s_wait_req && MemOp.isStore(memOp)
+  def tlbReqValid: Bool    = state.valid
+  def l2CReqValid: Bool    = state.wait_req && MemOp.isLoad(memOp)
+  def sbufWriteValid: Bool = state.wait_req && MemOp.isStore(memOp)
 }
 
 class TileLSUnitToTiles(implicit val p: Parameters) extends Bundle with TileLSQParams {
@@ -668,11 +683,11 @@ class TileLSQueue (implicit p: Parameters) extends XSModule with TileLSQParams w
   
   // queues
   val ctrl_queue = Reg(Vec(tileLSQ_sz, new Bundle{
-    val tmm     = UInt(tile_idx_w.W)
-    val row     = UInt(row_idx_w.W)
-    val memOp   = MemOp()
+    val tmm   = UInt(tile_idx_w.W)
+    val row   = UInt(row_idx_w.W)
+    val memOp = MemOp()
   }))
-  val state_queue = RegInit(VecInit.fill(tileLSQ_sz)(LSQState.s_idle))
+  val state_queue = RegInit(VecInit.fill(tileLSQ_sz)(LSQState()))
   val vaddr_queue = Reg(Vec(tileLSQ_sz, UInt(VAddrBits.W)))
   val paddr_queue = Reg(Vec(tileLSQ_sz, UInt(PAddrBits.W)))
 
@@ -775,7 +790,8 @@ class TileLSQueue (implicit p: Parameters) extends XSModule with TileLSQParams w
   }
 
   for(i <- 0 until numL2CReadPort) {
-    when(ldu.io.tlReqEntry(i).fire || l2CReq_entry(i).sbufWriteValid) {
+    when((ldu.io.tlReqEntry(i).fire || !l2CReq_entry(i).l2CReqValid) &&
+         (l2CReq_ptr(i) + step.U <= tlb_ptr_last)) {
       l2CReq_ptr(i) := l2CReq_ptr(i) + step.U
     }
   }
@@ -789,7 +805,7 @@ class TileLSQueue (implicit p: Parameters) extends XSModule with TileLSQParams w
   val sbufW_entry = ToTmuLSQEntry(sbufW_ptr)
   val l2sCheck = Wire(Bool())
   l2sCheck := ParallelOR(state_queue.zip(ctrl_queue).map { case (state, ctrl) =>
-    state === LSQState.s_wait_resp && MemOp.isLoad(ctrl.memOp) && 
+    state.wait_resp && MemOp.isLoad(ctrl.memOp) && 
     ctrl.tmm === sbufW_entry.tmm && ctrl.row === sbufW_entry.row // 未完成的 load 请求
   }) // load to store check!
 
@@ -799,13 +815,14 @@ class TileLSQueue (implicit p: Parameters) extends XSModule with TileLSQParams w
   stu.io.tmmRead <> io.tileData.tmmRead
   stu.io.sbuffer <> io.sbuffer
   
-  when(stu.io.sbufWEntry.fire || sbufW_entry.l2CReqValid) {
+  when((stu.io.sbufWEntry.fire || !sbufW_entry.sbufWriteValid) &&
+       (sbufW_ptr < tlb_ptr_last)) {
     sbufW_ptr := sbufW_ptr + 1.U
   }
   
   // LSQueue 出队
   val deq_entry = ToTmuLSQEntry(out_ptr)
-  val deq_enable = deq_entry.state === LSQState.s_done
+  val deq_enable = deq_entry.state.done
   when(deq_enable) {
     out_ptr := out_ptr + 1.U
   }
@@ -826,23 +843,17 @@ class TileLSQueue (implicit p: Parameters) extends XSModule with TileLSQParams w
 
   // LSQueue 表项state的更新
   for(i <- 0 until tileLSQ_sz) {
-    switch(state_queue(i)) {
-      is(LSQState.s_idle) {
-        state_queue(i) := Mux(enq_enable && in_ptr.value === i.U, LSQState.s_wait_paddr, LSQState.s_idle)
-      }
-      is(LSQState.s_wait_paddr) {
-        state_queue(i) := Mux(tlbHit && tlb_ptr_last.value === i.U, LSQState.s_wait_req, LSQState.s_wait_paddr)
-      }
-      is(LSQState.s_wait_req) {
-        state_queue(i) := Mux(tlReqDone(i), LSQState.s_wait_resp, 
-                          Mux(sbufWDone(i), LSQState.s_done, LSQState.s_wait_req))
-      }
-      is(LSQState.s_wait_resp) {
-        state_queue(i) := Mux(tlRespDone(i), LSQState.s_done, LSQState.s_wait_resp)
-      }
-      is(LSQState.s_done) {
-        state_queue(i) := Mux(deq_enable && out_ptr.value === i.U, LSQState.s_idle, LSQState.s_done)
-      }
+    when(enq_enable && in_ptr.value === i.U) {
+      state_queue(i).valid := true.B
+    }
+    when(tlReqDone(i) || sbufWDone(i)) {
+      state_queue(i).req_done := true.B
+    }
+    when(sbufWDone(i) || tlRespDone(i)) {
+      state_queue(i).done := true.B
+    }
+    when(deq_enable && out_ptr.value === i.U) {
+      state_queue(i).reset()
     }
   }
 }
