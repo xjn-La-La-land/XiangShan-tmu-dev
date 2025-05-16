@@ -624,7 +624,7 @@ class TileLSQInput(implicit p: Parameters) extends XSBundle with TileLSQParams {
 }
 
 class TileLSQEntry(implicit p: Parameters) extends XSBundle with TileLSQParams {
-  val id  = UInt(sourceIDWidth.W)
+  val id  = UInt(log2Ceil(tileLSQ_sz).W)
   val tmm = UInt(tile_idx_w.W)
   val row = UInt(row_idx_w.W)
   val vaddr = UInt(VAddrBits.W)
@@ -702,7 +702,7 @@ class TileLSQueue (implicit p: Parameters) extends XSModule with TileLSQParams w
 
   def ToTmuLSQEntry(id: UInt): TileLSQEntry = {
     val entry = Wire(new TileLSQEntry)
-    entry.id    := id.head(sourceIDWidth)
+    entry.id    := id
     entry.tmm   := ctrl_queue(id).tmm
     entry.row   := ctrl_queue(id).row
     entry.memOp := ctrl_queue(id).memOp
@@ -781,19 +781,13 @@ class TileLSQueue (implicit p: Parameters) extends XSModule with TileLSQParams w
   for(i <- 0 until numL2CReadPort) {
     ldu.io.tlReqEntry(i).valid := l2CReq_entry(i).l2CReqValid
     ldu.io.tlReqEntry(i).bits  := l2CReq_entry(i)
-  }
 
-  for(i <- 0 until numL2CReadPort) {
     when((ldu.io.tlReqEntry(i).fire || !l2CReq_entry(i).l2CReqValid) &&
          (l2CReq_ptr(i) + step.U <= tlb_resp_ptr)) {
       l2CReq_ptr(i) := l2CReq_ptr(i) + step.U
     }
-  }
 
-  // l2-cache load resp
-  for(i <- 0 until numL2CReadPort) {
-    val id = Cat(ldu.io.tlRespId(i), i.U)
-    ldu.io.tlRespEntry(i) := ToTmuLSQEntry(id)
+    ldu.io.tlRespEntry(i) := ToTmuLSQEntry(ldu.io.tlRespId(i).bits)
   }
 
   // l1-dcache write(to sbuffer)
@@ -832,7 +826,7 @@ class TileLSQueue (implicit p: Parameters) extends XSModule with TileLSQParams w
   }
   def l2CRespDone(id: Int): Bool = {
     val i = id % numL2CReadPort
-    ldu.io.tlRespDone(i) && ldu.io.tlRespId(i) === id.U
+    ldu.io.tlRespId(i).valid && ldu.io.tlRespId(i).bits === id.U
   }
   def sbufWDone(id: Int): Bool = {
     stu.io.sbufWEntry.fire && stu.io.sbufWEntry.bits.id === id.U
@@ -895,34 +889,35 @@ class TmuL2CLoadUnit(implicit p: Parameters) extends XSModule with TileLSQParams
     val tlReqEntry  = Flipped(Vec(numL2CReadPort, Decoupled(new TileLSQEntry)))
     val memBus      = Vec(numL2CReadPort, new TmuMemBus)
     val tmmWrite    = Vec(numL2CReadPort, new TilesWritePort)
-    val tlRespId    = Output(Vec(numL2CReadPort, UInt(sourceIDWidth.W)))
+    val tlRespId    = Output(Vec(numL2CReadPort, Valid(UInt(log2Ceil(tileLSQ_sz).W))))
     val tlRespEntry = Flipped(Vec(numL2CReadPort, new TileLSQEntry))
-    val tlRespDone  = Output(Vec(numL2CReadPort, Bool()))
   })
 
-  // l2-cache req
   for(i <- 0 until numL2CReadPort) {
-    io.memBus(i).req.valid       := io.tlReqEntry(i).valid
-    io.memBus(i).req.bits.source := io.tlReqEntry(i).bits.id
-    io.memBus(i).req.bits.paddr  := io.tlReqEntry(i).bits.paddr
-    io.tlReqEntry(i).ready       := io.memBus(i).req.ready
+    // l2-cache req
+    val reqEntry = io.tlReqEntry(i)
+    val memBus   = io.memBus(i)
+    memBus.req.valid       := reqEntry.valid
+    memBus.req.bits.source := reqEntry.bits.id.head(sourceIDWidth)
+    memBus.req.bits.paddr  := reqEntry.bits.paddr
+    reqEntry.ready         := memBus.req.ready
     // l2-cache resp
-    io.memBus(i).resp.ready := true.B // always ready to receive response
-    io.tlRespId(i) := io.memBus(i).resp.bits.source
+    memBus.resp.ready := true.B // always ready to receive response
     val tlResp_cnt = DataTransCnt(l2TldNumBurst)
     val l2Rdata_buf = Reg(Vec(l2TldNumBurst-1, UInt(l2TldDataWidth.W)))
-    when(io.memBus(i).resp.fire) {
+    when(memBus.resp.fire) {
       tlResp_cnt.update()
       when(!tlResp_cnt.last) {
-        l2Rdata_buf(tlResp_cnt.value) := io.memBus(i).resp.bits.rdata
+        l2Rdata_buf(tlResp_cnt.value) := memBus.resp.bits.rdata
       }
     }
-    io.tlRespDone(i) := io.memBus(i).resp.fire && tlResp_cnt.last // tilelink D channel transfer done
+    io.tlRespId(i).bits  := Cat(memBus.resp.bits.source, i.U)
+    io.tlRespId(i).valid := memBus.resp.fire && tlResp_cnt.last // tilelink D channel transfer done
     // write back to tile register
-    io.tmmWrite(i).wen   := io.tlRespDone(i)
+    io.tmmWrite(i).wen   := io.tlRespId(i).valid
     io.tmmWrite(i).wtile := io.tlRespEntry(i).tmm
     io.tmmWrite(i).wrow  := io.tlRespEntry(i).row
-    io.tmmWrite(i).wdata := Cat(io.memBus(i).resp.bits.rdata, l2Rdata_buf.asUInt)
+    io.tmmWrite(i).wdata := Cat(memBus.resp.bits.rdata, l2Rdata_buf.asUInt)
   }
 }
 
