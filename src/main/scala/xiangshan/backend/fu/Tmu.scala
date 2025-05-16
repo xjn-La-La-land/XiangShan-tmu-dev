@@ -29,20 +29,9 @@ trait TmuParams extends HasXSParameter {
   val num_tilerf_readPort  = 4
   val num_tilerf_writePort = 3
 
-  // TileLink clinet node params
-  val tileLSQ_sz = 32
-  val tmuClientParameters = TLMasterPortParameters.v1(
-    clients = Seq(TLMasterParameters.v1(
-      "tmu",
-      sourceId = IdRange(0, tileLSQ_sz) // [0, tileLSQ_sz)
-    )),
-  )
-
   val tdpInstBuf_sz = 4 // tdpUnit 能容纳的最大指令数量+1
   val tlsInstBuf_sz = 3 // tlsQueue 能容纳的最大指令数量+1
   class InstBufPtr (size: Int)(implicit p: Parameters) extends CircularQueuePtr[InstBufPtr](p => size)
-
-  val numL2CReadPort = 2 // l2Cache read做成双端口,将数据吞吐提高到64B
 
   case class InstBufTemplate (size: Int) extends HasCircularQueuePtrHelper {
     val info  = Reg(Vec(size, new TmuDataInput))
@@ -70,6 +59,17 @@ trait TmuParams extends HasXSParameter {
       rdy_ptr := rdy_ptr + 1.U
     }
   }
+
+  // TileLink clinet node params
+  val tileLSQ_sz = 32
+  val numL2CReadPort = 2 // l2Cache read做成双端口,将数据吞吐提高到64B
+  val tmuSourceNum = tileLSQ_sz/numL2CReadPort
+  val tmuClientParameters = TLMasterPortParameters.v1(
+    clients = Seq(TLMasterParameters.v1(
+      "tmu",
+      sourceId = IdRange(0, tmuSourceNum) 
+    )),
+  )
 }
 
 
@@ -567,7 +567,7 @@ trait TileLSQParams extends TmuParams with HasDCacheParameters {
     def isStore(op: UInt): Bool = op === tstl1
   }
 
-  val sourceIDWidth = log2Ceil(tileLSQ_sz)
+  val sourceIDWidth = log2Ceil(tmuSourceNum)
 
   val l1TldDataWidth = VLEN
   val l1TstDataWidth = CacheLineSize   // 64B
@@ -661,7 +661,7 @@ class TmuMemBus (implicit p: Parameters) extends XSBundle with TileLSQParams {
     val (bus, edge) = node.out.head
     bus.a.valid := req.valid
     req.ready   := bus.a.ready
-    bus.a.bits  := edge.Get(fromSource = req.bits.source, toAddress = req.bits.paddr, lgSize = log2Ceil(l1BusDataWidth/8).U)._2
+    bus.a.bits  := edge.Get(fromSource = req.bits.source, toAddress = req.bits.paddr, lgSize = log2Ceil(numTcolsb).U)._2
 
     resp.valid  := bus.d.valid
     bus.d.ready := resp.ready
@@ -700,20 +700,9 @@ class TileLSQueue (implicit p: Parameters) extends XSModule with TileLSQParams w
   val sbufW_ptr  = RegInit(0.U.asTypeOf(new TileLSQPtr)) // sbuffer write ptr
   val out_ptr    = RegInit(0.U.asTypeOf(new TileLSQPtr)) // 出队指针
 
-  def ToTmuLSQEntry(ptr: TileLSQPtr): TileLSQEntry = {
-    val entry = Wire(new TileLSQEntry)
-    entry.id    := ptr.value
-    entry.tmm   := ctrl_queue(ptr.value).tmm
-    entry.row   := ctrl_queue(ptr.value).row
-    entry.memOp := ctrl_queue(ptr.value).memOp
-    entry.vaddr := vaddr_queue(ptr.value)
-    entry.paddr := paddr_queue(ptr.value)
-    entry.state := state_queue(ptr.value)
-    entry
-  }
   def ToTmuLSQEntry(id: UInt): TileLSQEntry = {
     val entry = Wire(new TileLSQEntry)
-    entry.id    := id
+    entry.id    := id.head(sourceIDWidth)
     entry.tmm   := ctrl_queue(id).tmm
     entry.row   := ctrl_queue(id).row
     entry.memOp := ctrl_queue(id).memOp
@@ -722,6 +711,7 @@ class TileLSQueue (implicit p: Parameters) extends XSModule with TileLSQParams w
     entry.state := state_queue(id)
     entry
   }
+  def ToTmuLSQEntry(ptr: TileLSQPtr): TileLSQEntry = ToTmuLSQEntry(ptr.value)
 
   // tls_in buffer
   val lsq_enq_cnt = RegInit(0.U(row_idx_w.W))
@@ -802,7 +792,8 @@ class TileLSQueue (implicit p: Parameters) extends XSModule with TileLSQParams w
 
   // l2-cache load resp
   for(i <- 0 until numL2CReadPort) {
-    ldu.io.tlRespEntry(i) := ToTmuLSQEntry(ldu.io.tlRespId(i))
+    val id = Cat(ldu.io.tlRespId(i), i.U)
+    ldu.io.tlRespEntry(i) := ToTmuLSQEntry(id)
   }
 
   // l1-dcache write(to sbuffer)
