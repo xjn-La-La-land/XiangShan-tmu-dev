@@ -298,7 +298,6 @@ class TmuInstBuf (implicit p: Parameters) extends XSModule with TDPUnitParams wi
 }
 
 
-
 // HINT: Tile Matrix Unit
 // Tile Matrix Unit is a special functional unit that is used to accelerate matrix operations.
 class TmuModule (implicit p: Parameters) extends XSModule with TmuParams {
