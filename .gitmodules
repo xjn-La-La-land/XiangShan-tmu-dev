@@ -21,7 +21,7 @@
 	url = https://github.com/OpenXiangShan/YunSuan.git
 [submodule "coupledL2"]
 	path = coupledL2
-	url = https://github.com/OpenXiangShan/CoupledL2.git
+	url = https://github.com/xjn-La-La-land/CoupledL2-tmu-dev.git
 [submodule "openLLC"]
 	path = openLLC
 	url = https://github.com/OpenXiangShan/OpenLLC.git
