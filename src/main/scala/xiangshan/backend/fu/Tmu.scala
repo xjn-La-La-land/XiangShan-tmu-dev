@@ -205,7 +205,7 @@ class TmuInstBuf (implicit p: Parameters) extends XSModule with TDPUnitParams wi
   }))
   def tileBbufBusy(idx: Int): Bool = (
     (tdpIBuf.info zip tdpIBuf.valid).map { case (info, valid) =>
-      (info.tmmB === tileBbufInfo(idx).tmm) && valid
+      info.tmmB === tileBbufInfo(idx).tmm && valid
     }.reduce(_ || _)
   ) && tileBbufInfo(idx).valid
 
@@ -213,7 +213,7 @@ class TmuInstBuf (implicit p: Parameters) extends XSModule with TDPUnitParams wi
   val tileB_busy_vec = VecInit((0 until numTileBbuf).map(i => tileBbufBusy(i)))
   val tileB_hit      = ParallelOR(tileB_hit_vec)
   val tileB_hit_idx  = PriorityEncoder(tileB_hit_vec)
-  val tileB_free_idx = PriorityEncoder(tileB_hit_vec.map(!_))
+  val tileB_free_idx = PriorityEncoder(tileB_busy_vec.map(!_))
   io.tdpStageCtrl.tileBbufInfo.nextPtr := Mux(tileB_hit, tileB_hit_idx, tileB_free_idx)
   io.tdpStageCtrl.tileBbufInfo.hit     := tileB_hit
 
