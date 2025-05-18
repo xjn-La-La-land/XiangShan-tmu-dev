@@ -178,6 +178,8 @@ case class FuConfig (
 
   def isFence: Boolean = fuType == FuType.fence
 
+  def isTmu: Boolean = fuType == FuType.tmu
+
   def isVecArith: Boolean = fuType == FuType.vialuF || fuType == FuType.vimac ||
                             fuType == FuType.vppu || fuType == FuType.vipu ||
                             fuType == FuType.vfalu || fuType == FuType.vfma ||
@@ -836,11 +838,27 @@ object FuConfig {
     destDataBits = 128,
   )
 
+  // HINT: TMU config
+  val TmuCfg: FuConfig = FuConfig(
+    name = "tmu",
+    fuType = FuType.tmu,
+    fuGen = (p: Parameters, cfg: FuConfig) => Module(new Tmu(cfg)(p).suggestName("Tmu")),
+    srcData = Seq(
+      Seq(IntData(), IntData()),
+    ), // tileloadd, tilestored need 2 Reg src
+    piped = false,
+    latency = UncertainLatency(),
+    exceptionOut = Seq(), // TODO: add exception
+    hasLoadError = false, // TODO: add load error
+    immType = Set(SelImm.IMM_S),
+  )
+
   def allConfigs = Seq(
     JmpCfg, BrhCfg, I2fCfg, I2vCfg, F2vCfg, CsrCfg, AluCfg, MulCfg, DivCfg, FenceCfg, BkuCfg, VSetRvfWvfCfg, VSetRiWvfCfg, VSetRiWiCfg,
     LduCfg, StaCfg, StdCfg, MouCfg, MoudCfg, VialuCfg, VipuCfg, VlduCfg, VstuCfg, VseglduSeg, VsegstuCfg,
     FaluCfg, FmacCfg, FcvtCfg, FdivCfg,
-    VfaluCfg, VfmaCfg, VfcvtCfg, HyldaCfg, HystaCfg
+    VfaluCfg, VfmaCfg, VfcvtCfg, HyldaCfg, HystaCfg,
+    TmuCfg
   )
 
   def VecArithFuConfigs = Seq(

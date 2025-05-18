@@ -43,6 +43,7 @@ class XSTile()(implicit p: Parameters) extends LazyModule
   val enableL2 = coreParams.L2CacheParamsOpt.isDefined
   // =========== Public Ports ============
   val memBlock = core.memBlock.inner
+  val backend  = core.backend.inner
   val core_l3_pf_port = memBlock.l3_pf_sender_opt
   val memory_port = if (enableCHI && enableL2) None else Some(l2top.inner.memory_port.get)
   val tl_uncache = l2top.inner.mmio_port
@@ -70,6 +71,10 @@ class XSTile()(implicit p: Parameters) extends LazyModule
   if (!coreParams.softPTW) {
     l2top.inner.misc_l2_pmu := l2top.inner.ptw_logger := l2top.inner.ptw_to_l2_buffer.node := memBlock.ptw_to_l2_buffer.node
   }
+
+  backend.tmu_nodes.foreach(node =>
+    l2top.inner.misc_l2_pmu := node  // connect l2 and tmu
+  )
 
   // L2 Prefetch
   l2top.inner.l2cache match {

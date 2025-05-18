@@ -88,7 +88,7 @@ case class XSCoreParameters
   EnableLoop: Boolean = true,
   EnableSC: Boolean = true,
   EnbaleTlbDebug: Boolean = false,
-  EnableClockGate: Boolean = true,
+  EnableClockGate: Boolean = false, // close clock gate for now
   EnableJal: Boolean = false,
   EnableFauFTB: Boolean = true,
   EnableSv48: Boolean = true,
@@ -222,7 +222,7 @@ case class XSCoreParameters
   VecMemDispatchMaxNumber: Int = 16,
   VecMemUnitStrideMaxFlowNum: Int = 2,
   VecMemLSQEnqIteratorNumberSeq: Seq[Int] = Seq(16, 16, 16, 16, 16, 16),
-  StoreBufferSize: Int = 16,
+  StoreBufferSize: Int = 32,
   StoreBufferThreshold: Int = 7,
   EnsbufferWidth: Int = 2,
   LoadDependencyWidth: Int = 2,
@@ -302,6 +302,15 @@ case class XSCoreParameters
   pftlbParameters: TLBParameters = TLBParameters(
     name = "pftlb",
     NWays = 48,
+    outReplace = false,
+    partialStaticPMP = true,
+    outsideRecvFlush = true,
+    saveLevel = false,
+    lgMaxSize = 4
+  ),
+  tmutlbParameters: TLBParameters = TLBParameters(
+    name = "tmutlb",
+    NWays = 16,
     outReplace = false,
     partialStaticPMP = true,
     outsideRecvFlush = true,
@@ -406,9 +415,10 @@ case class XSCoreParameters
         ExeUnitParams("ALU2", Seq(AluCfg), Seq(IntWB(port = 2, 0)), Seq(Seq(IntRD(4, 0)), Seq(IntRD(5, 0))), true, 2),
         ExeUnitParams("BJU2", Seq(BrhCfg, JmpCfg, I2fCfg, VSetRiWiCfg, VSetRiWvfCfg, I2vCfg), Seq(IntWB(port = 4, 0), VfWB(2, 0), V0WB(port = 2, 0), VlWB(port = intSchdVlWbPort, 0), FpWB(port = 2, 1)), Seq(Seq(IntRD(2, 1)), Seq(IntRD(3, 1)))),
       ), numEntries = IssueQueueSize, numEnq = 2, numComp = IssueQueueCompEntrySize),
+      // HINT: add tmu here!
       IssueBlockParams(Seq(
         ExeUnitParams("ALU3", Seq(AluCfg), Seq(IntWB(port = 3, 0)), Seq(Seq(IntRD(6, 0)), Seq(IntRD(7, 0))), true, 2),
-        ExeUnitParams("BJU3", Seq(CsrCfg, FenceCfg, DivCfg), Seq(IntWB(port = 4, 1)), Seq(Seq(IntRD(0, 1)), Seq(IntRD(1, 1)))),
+        ExeUnitParams("BJU3", Seq(CsrCfg, FenceCfg, DivCfg, TmuCfg), Seq(IntWB(port = 4, 1)), Seq(Seq(IntRD(0, 1)), Seq(IntRD(1, 1)))),
       ), numEntries = IssueQueueSize, numEnq = 2, numComp = IssueQueueCompEntrySize),
     ),
       numPregs = intPreg.numEntries,
@@ -842,6 +852,7 @@ trait HasXSParameter {
   def sttlbParams = coreParams.sttlbParameters
   def hytlbParams = coreParams.hytlbParameters
   def pftlbParams = coreParams.pftlbParameters
+  def tmutlbParams = coreParams.tmutlbParameters
   def l2ToL1Params = coreParams.l2ToL1tlbParameters
   def btlbParams = coreParams.btlbParameters
   def l2tlbParams = coreParams.l2tlbParameters

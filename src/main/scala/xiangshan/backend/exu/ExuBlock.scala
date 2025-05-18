@@ -13,6 +13,10 @@ import xiangshan.backend.fu.FuConfig.{AluCfg, BrhCfg}
 import xiangshan.backend.fu.vector.Bundles.{VType, Vxrm}
 import xiangshan.backend.fu.fpu.Bundles.Frm
 import xiangshan.backend.fu.wrapper.{CSRInput, CSRToDecode}
+import xiangshan.cache.mmu.TlbRequestIO
+import freechips.rocketchip.tilelink.TLClientNode
+import xiangshan.backend.fu.{TmuParams,TmuMemBus}
+import xiangshan.cache.DCacheLineReq
 
 class ExuBlock(params: SchdBlockParams)(implicit p: Parameters) extends LazyModule with HasXSParameter {
   override def shouldBeInlined: Boolean = false
@@ -51,6 +55,12 @@ class ExuBlockImp(
 //    if (exu.wrapper.exuParams.fuConfigs.contains(AluCfg) || exu.wrapper.exuParams.fuConfigs.contains(BrhCfg)){
 //      XSPerfAccumulate(s"${(exu.wrapper.exuParams.name)}_fire_cnt", PopCount(exu.io.in.fire))
 //    }
+
+    // tmu memory io connection
+    exu.io.tmuTlb.foreach(exuio => io.tmuTlb.get <> exuio)
+    exu.io.tmuMemBus.foreach(exuio => io.tmuMemBus.get <> exuio)
+    exu.io.tmuSbuffer.foreach(exuio => io.tmuSbuffer.get <> exuio)
+
     XSPerfAccumulate(s"${(exu.wrapper.exuParams.name)}_fire_cnt", PopCount(exu.io.in.fire))
   }
   exus.find(_.io.csrio.nonEmpty).map(_.io.csrio.get).foreach { csrio =>
@@ -68,7 +78,7 @@ class ExuBlockImp(
   generateCriticalErrors()
 }
 
-class ExuBlockIO(implicit p: Parameters, params: SchdBlockParams) extends XSBundle {
+class ExuBlockIO(implicit p: Parameters, params: SchdBlockParams) extends XSBundle with TmuParams {
   val flush = Flipped(ValidIO(new Redirect))
   // in(i)(j): issueblock(i), exu(j)
   val in: MixedVec[MixedVec[DecoupledIO[ExuInput]]] = Flipped(params.genExuInputCopySrcBundle)
@@ -85,4 +95,10 @@ class ExuBlockIO(implicit p: Parameters, params: SchdBlockParams) extends XSBund
   val vtype = Option.when(params.writeVConfig)((Valid(new VType)))
   val vlIsZero = Option.when(params.writeVConfig)(Output(Bool()))
   val vlIsVlmax = Option.when(params.writeVConfig)(Output(Bool()))
+
+  // tmu memory io
+  val tmuTlb     = Option.when(params.hasTmu)(new TlbRequestIO())
+  val tmuMemBus  = Option.when(params.hasTmu)(Vec(numL2CReadPort, new TmuMemBus))
+  val tmuSbuffer = Option.when(params.hasTmu)(Decoupled(new DCacheLineReq))
+  // val tmuDcache  = Option.when(params.hasTmu)(Flipped(new DCacheToSbufferIO))
 }

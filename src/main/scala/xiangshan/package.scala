@@ -163,17 +163,19 @@ package object xiangshan {
   }
 
   object CommitType {
-    def NORMAL = "b000".U  // int/fp
-    def BRANCH = "b001".U  // branch
-    def LOAD   = "b010".U  // load
-    def STORE  = "b011".U  // store
+    def NORMAL = "b0000".U  // int/fp
+    def BRANCH = "b0001".U  // branch
+    def LOAD   = "b0010".U  // load
+    def STORE  = "b0011".U  // store
+    def TILELS = "b1000".U  // tile load/store
 
-    def apply() = UInt(3.W)
+    def apply() = UInt(4.W)
     def isFused(commitType: UInt): Bool = commitType(2)
     def isLoadStore(commitType: UInt): Bool = !isFused(commitType) && commitType(1)
     def lsInstIsStore(commitType: UInt): Bool = commitType(0)
     def isStore(commitType: UInt): Bool = isLoadStore(commitType) && lsInstIsStore(commitType)
     def isBranch(commitType: UInt): Bool = commitType(0) && !commitType(1) && !isFused(commitType)
+    def isTileLS(commitType: UInt): Bool = commitType(3)
   }
 
   object RedirectLevel {
@@ -382,6 +384,20 @@ package object xiangshan {
     def logicToZexth(func: UInt) = Cat("b110".U(3.W), func(3, 1), 1.U(1.W))
 
     def apply() = UInt(FuOpTypeWidth.W)
+  }
+
+  // HINT: FuOpType for TMU
+  object TMUOpType {
+    def tileload   = "b100".U
+    def tileloadt1 = "b101".U
+    def tilestore  = "b110".U
+    def tdpbss     = "b011".U
+    def tdpbsu     = "b010".U
+    def tdpbus     = "b001".U
+    def tdpbuu     = "b000".U
+
+    def isTdp(func: UInt) = func(2) === "b0".U
+    def isTileLS(func: UInt) = func(2) === "b1".U
   }
 
   object VSETOpType {

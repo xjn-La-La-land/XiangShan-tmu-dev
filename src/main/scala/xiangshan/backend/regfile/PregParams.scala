@@ -24,10 +24,10 @@ case class IntPregParams(
 }
 
 case class FpPregParams(
-                          numEntries: Int,
-                          numRead   : Option[Int],
-                          numWrite  : Option[Int],
-                        ) extends PregParams {
+  numEntries: Int,
+  numRead   : Option[Int],
+  numWrite  : Option[Int],
+) extends PregParams {
 
   val dataCfg: DataConfig = FpData()
   val isFake: Boolean = false

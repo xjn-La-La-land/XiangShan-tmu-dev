@@ -35,11 +35,12 @@ class IssueQueue(params: IssueBlockParams)(implicit p: Parameters) extends LazyM
   }
 }
 
-class IssueQueueStatusBundle(numEnq: Int, numEntries: Int) extends Bundle {
+class IssueQueueStatusBundle(numEnq: Int, numEntries: Int)(implicit params: IssueBlockParams) extends Bundle {
   val empty = Output(Bool())
   val full = Output(Bool())
   val validCnt = Output(UInt(log2Ceil(numEntries + 1).W))
   val leftVec = Output(Vec(numEnq + 1, Bool()))
+  val hasXtm = Option.when(params.TmuCnt != 0)(Output(Bool()))
 }
 
 class IssueQueueDeqRespBundle(implicit p:Parameters, params: IssueBlockParams) extends EntryDeqRespBundle
@@ -913,6 +914,11 @@ class IssueQueueImp(override val wrapper: IssueQueue)(implicit p: Parameters, va
   io.status.empty := !Cat(validVec).orR
   io.status.full := othersCanotIn
   io.status.validCnt := PopCount(validVec)
+  if(io.status.hasXtm.isDefined) {
+    io.status.hasXtm.get := entries.io.fuType.zip(validVec).map { case (fuType, v) =>
+      FuType.isTmu(fuType) && v
+    }.reduce(_ || _)
+  }
 
   protected def getDeqLat(deqPortIdx: Int, fuType: UInt) : UInt = {
     Mux1H(wakeupFuLatencyMaps(deqPortIdx) map { case (k, v) => (fuType(k.id), v.U) })

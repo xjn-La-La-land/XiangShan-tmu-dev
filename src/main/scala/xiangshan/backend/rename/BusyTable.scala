@@ -134,9 +134,9 @@ class BusyTable(numReadPorts: Int, numWritePorts: Int, numPhyPregs: Int, pregWB:
     when(wakeUpMask(idx)) {
       ldDp := (if (wakeUpIn.nonEmpty) Mux1H(wakeupOHVec(idx), shiftLoadDependency) else 0.U.asTypeOf(ldDp))
     }
-      .elsewhen(ldDp.map(x => x.orR).reduce(_ | _)) {
-        ldDp := VecInit(ldDp.map(x => x << 1))
-      }
+    .elsewhen(ldDp.map(x => x.orR).reduce(_ | _)) {
+      ldDp := VecInit(ldDp.map(x => x << 1))
+    }
   }
 
   /*
@@ -156,16 +156,16 @@ class BusyTable(numReadPorts: Int, numWritePorts: Int, numPhyPregs: Int, pregWB:
     when(wakeUpMask(idx) || wbMask(idx)) {
       update := false.B                                   //ready
     }
-      .elsewhen(allocMask(idx) || ldCancelMask(idx)) {
-        update := true.B                                    //busy
-        if (idx == 0 && pregWB.isInstanceOf[IntWB]) {
-          // Int RegFile 0 is always ready
-          update := false.B
-        }
+    .elsewhen(allocMask(idx) || ldCancelMask(idx)) {
+      update := true.B                                    //busy
+      if (idx == 0 && pregWB.isInstanceOf[IntWB]) {
+        // Int RegFile 0 is always ready
+        update := false.B
       }
-      .otherwise {
-        update := table(idx)
-      }
+    }
+    .otherwise {
+      update := table(idx)
+    }
   }
 
   io.read.foreach{ case res =>

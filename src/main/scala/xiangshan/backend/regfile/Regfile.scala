@@ -64,12 +64,12 @@ class RfWritePortWithConfig(val rfWriteDataCfg: DataConfig, addrWidth: Int) exte
 class Regfile
 (
   name: String,
-  numPregs: Int,
+  numPregs: Int,    // HINT: num of physical registers
   numReadPorts: Int,
   numWritePorts: Int,
   hasZero: Boolean,
-  len: Int,
-  width: Int,
+  len: Int,         // HINT: data width
+  width: Int,       // HINT: addr width
   bankNum: Int = 1,
   isVlRegfile: Boolean = false,
 ) extends Module {

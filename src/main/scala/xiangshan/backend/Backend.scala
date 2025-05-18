@@ -53,6 +53,11 @@ import xiangshan.mem.{LqPtr, LsqEnqIO, SqPtr}
 
 import scala.collection.mutable
 
+import xiangshan.cache.mmu.TlbRequestIO
+import freechips.rocketchip.tilelink.TLClientNode
+import xiangshan.backend.fu.{TmuParams,TmuMemBus}
+import xiangshan.cache.DCacheLineReq
+
 class Backend(val params: BackendParams)(implicit p: Parameters) extends LazyModule
   with HasXSParameter {
   override def shouldBeInlined: Boolean = false
@@ -69,7 +74,8 @@ class BackendImp(wrapper: Backend)(implicit p: Parameters) extends LazyModuleImp
 }
 
 class BackendInlined(val params: BackendParams)(implicit p: Parameters) extends LazyModule
-  with HasXSParameter {
+  with HasXSParameter
+  with TmuParams {
 
   override def shouldBeInlined: Boolean = true
 
@@ -187,6 +193,8 @@ class BackendInlined(val params: BackendParams)(implicit p: Parameters) extends 
   val vfExuBlock = params.vfSchdParams.map(x => LazyModule(new ExuBlock(x)))
   val wbFuBusyTable = LazyModule(new WbFuBusyTable(params))
 
+  val tmu_nodes = Seq.fill(numL2CReadPort)(TLClientNode(Seq(tmuClientParameters)))
+
   lazy val module = new BackendInlinedImp(this)
 }
 
@@ -276,6 +284,7 @@ class BackendInlinedImp(override val wrapper: BackendInlined)(implicit p: Parame
   ctrlBlock.io.toDispatch.wakeUpVec := vfScheduler.io.toSchedulers.wakeupVec
   ctrlBlock.io.toDispatch.wakeUpMem := memScheduler.io.toSchedulers.wakeupVec
   ctrlBlock.io.toDispatch.IQValidNumVec := intScheduler.io.IQValidNumVec ++ fpScheduler.io.IQValidNumVec ++ vfScheduler.io.IQValidNumVec ++ memScheduler.io.IQValidNumVec
+  ctrlBlock.io.toDispatch.IQHasXtmVec   := intScheduler.io.IQHasXtmVec ++ fpScheduler.io.IQHasXtmVec ++ vfScheduler.io.IQHasXtmVec ++ memScheduler.io.IQHasXtmVec
   ctrlBlock.io.toDispatch.ldCancel := io.mem.ldCancel
   ctrlBlock.io.toDispatch.og0Cancel := og0Cancel
   ctrlBlock.io.toDispatch.wbPregsInt.zip(wbDataPath.io.toIntPreg).map(x => {
@@ -619,6 +628,13 @@ class BackendInlinedImp(override val wrapper: BackendInlined)(implicit p: Parame
   csrio.perf.ctrlInfo <> ctrlBlock.io.perfInfo.ctrlInfo
   private val fenceio = intExuBlock.io.fenceio.get
   io.fenceio <> fenceio
+
+  // tmu memory io connection
+  io.mem.tmuTlb.get <> intExuBlock.io.tmuTlb.get
+  io.mem.tmuSbuffer.get <> intExuBlock.io.tmuSbuffer.get
+  (intExuBlock.io.tmuMemBus.get zip wrapper.tmu_nodes).foreach{ case(memBus, node) =>
+    memBus.ConnectClientNode(node)
+  }
 
   // to fpExuBlock
   fpExuBlock.io.flush := ctrlBlock.io.toExuBlock.flush
@@ -1022,6 +1038,10 @@ class BackendMemIO(implicit p: Parameters, params: BackendParams) extends XSBund
   val sfence = Output(new SfenceBundle)
   val isStoreException = Output(Bool())
   val isVlsException = Output(Bool())
+
+  val tmuTlb = Option.when(params.hasTmu)(new TlbRequestIO())
+  val tmuSbuffer = Option.when(params.hasTmu)(Decoupled(new DCacheLineReq))
+  // val tmuDcache = Option.when(params.hasTmu)(Flipped(new DCacheToSbufferIO))
 
   // ATTENTION: The issue ports' sequence order should be the same as IQs' deq config
   private [backend] def issueUops: Seq[DecoupledIO[MemExuInput]] = {

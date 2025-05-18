@@ -36,6 +36,7 @@ import xiangshan.mem._
 import xiangshan.cache.mmu._
 import xiangshan.cache.mmu.TlbRequestIO
 import scala.collection.mutable.ListBuffer
+import xiangshan.backend.fu.TmuParams
 
 abstract class XSModule(implicit val p: Parameters) extends Module
   with HasXSParameter
@@ -222,6 +223,9 @@ class XSCoreImp(outer: XSCoreBase) extends LazyModuleImp(outer)
   memBlock.io.ooo_to_mem.loadFastFuOpType := 0.U.asTypeOf(memBlock.io.ooo_to_mem.loadFastFuOpType)
 
   memBlock.io.ooo_to_mem.sfence <> backend.io.mem.sfence
+
+  memBlock.io.ooo_to_mem.tmuTlb <> backend.io.mem.tmuTlb.get // connect tmuTlb and tmu
+  memBlock.io.ooo_to_mem.tmuSbuffer <> backend.io.mem.tmuSbuffer.get // connect tmuSbuffer and tmu
 
   memBlock.io.redirect := backend.io.mem.redirect
   memBlock.io.ooo_to_mem.csrCtrl := backend.io.mem.csrCtrl

@@ -166,6 +166,8 @@ case class IssueBlockParams(
 
   def FenceCnt: Int = exuBlockParams.map(_.fuConfigs.count(_.fuType == FuType.fence)).sum
 
+  def TmuCnt: Int = exuBlockParams.map(_.fuConfigs.count(_.fuType == FuType.tmu)).sum
+
   def BkuCnt: Int = exuBlockParams.map(_.fuConfigs.count(_.fuType == FuType.bku)).sum
 
   def VsetCnt: Int = exuBlockParams.map(_.fuConfigs.count(x => x.fuType == FuType.vsetiwi || x.fuType == FuType.vsetiwf || x.fuType == FuType.vsetfwf)).sum

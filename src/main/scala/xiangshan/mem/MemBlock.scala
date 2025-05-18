@@ -94,6 +94,9 @@ class ooo_to_mem(implicit p: Parameters) extends MemBlockBundle {
   val loadFastImm = Vec(LdExuCnt, Input(UInt(12.W)))
   val sfence = Input(new SfenceBundle)
   val tlbCsr = Input(new TlbCsrBundle)
+  val tmuTlb = Flipped(new TlbRequestIO()) // for tmu
+  val tmuSbuffer = Flipped(Decoupled(new DCacheLineReq))
+  // val tmuDcache = new DCacheToSbufferIO
   val lsqio = new Bundle {
     val lcommit = Input(UInt(log2Up(CommitWidth + 1).W))
     val scommit = Input(UInt(log2Up(CommitWidth + 1).W))
@@ -250,6 +253,54 @@ class FrontendBridge()(implicit p: Parameters) extends LazyModule {
   val instr_uncache_node = LazyModule(new InstrUncacheBuffer()).suggestName("instr_uncache").node
   lazy val module = new LazyModuleImp(this) {
   }
+}
+
+
+// HINT: Sbuffer与tmu共享dcache的写端口
+class SbufferTmuArbiter (implicit p: Parameters) extends DCacheModule {
+  val io = IO(new Bundle {
+    val tmu     = new DCacheToSbufferIO
+    val sbuffer = new DCacheToSbufferIO
+    val out     = Flipped(new DCacheToSbufferIO)
+  })
+
+  def wrapTmuId(id: UInt)   = Cat(1.U(1.W), id.take(reqIdWidth-1))
+  def unwrapTmuId(id: UInt) = Cat(0.U(1.W), id.take(reqIdWidth-1))
+
+  // 请求仲裁逻辑：优先发送sbuffer的写请求
+  private val reqArbiter = Module(new Arbiter(new DCacheLineReq, 2))
+  reqArbiter.io.in(0) <> io.sbuffer.req
+  reqArbiter.io.in(1) <> io.tmu.req
+
+  io.out.req <> reqArbiter.io.out
+  io.out.req.bits.id := Mux(reqArbiter.io.chosen === 1.U, wrapTmuId(reqArbiter.io.out.bits.id), reqArbiter.io.out.bits.id)
+
+  // 响应分发逻辑：根据id最高位分发
+  private val hitValid = io.out.main_pipe_hit_resp.valid
+  private val hitData  = io.out.main_pipe_hit_resp.bits
+  private val replayValid = io.out.replay_resp.valid
+  private val replayData  = io.out.replay_resp.bits
+
+  io.sbuffer.main_pipe_hit_resp.valid := hitValid && !hitData.id(reqIdWidth-1)
+  io.sbuffer.main_pipe_hit_resp.bits  := hitData
+  io.sbuffer.replay_resp.valid        := replayValid && !replayData.id(reqIdWidth-1)
+  io.sbuffer.replay_resp.bits         := replayData
+
+  io.tmu.main_pipe_hit_resp.valid     := hitValid && hitData.id(reqIdWidth-1)
+  io.tmu.main_pipe_hit_resp.bits      := hitData
+  io.tmu.main_pipe_hit_resp.bits.id   := unwrapTmuId(hitData.id)
+  io.tmu.replay_resp.valid            := replayValid && replayData.id(reqIdWidth-1)
+  io.tmu.replay_resp.bits             := replayData
+  io.tmu.replay_resp.bits.id          := unwrapTmuId(replayData.id)
+
+  // debug
+  // when(io.tmu.main_pipe_hit_resp.fire) {
+  //   printf(p"[SbufferTmuArbiter] tmu hit: id = 0x${io.tmu.main_pipe_hit_resp.bits.id}\n")
+  // }
+  // when(io.tmu.replay_resp.fire) {
+  //   printf(p"[SbufferTmuArbiter] tmu replay: id = 0x${io.tmu.replay_resp.bits.id}\n")
+  // }
+
 }
 
 class MemBlockInlined()(implicit p: Parameters) extends LazyModule
@@ -669,13 +720,15 @@ class MemBlockInlinedImp(outer: MemBlockInlined) extends LazyModuleImp(outer)
   val dtlb_ld_tlb_ld = Module(new TLBNonBlock(LduCnt + HyuCnt + 1, 2, ldtlbParams))
   val dtlb_st_tlb_st = Module(new TLBNonBlock(StaCnt, 1, sttlbParams))
   val dtlb_prefetch_tlb_prefetch = Module(new TLBNonBlock(2, 2, pftlbParams))
+  val dtlb_tmu_tlb_tmu = Module(new TLBBLock(Width = 1, nRespDups = 1, q = tmutlbParams))
   val dtlb_ld = Seq(dtlb_ld_tlb_ld.io)
   val dtlb_st = Seq(dtlb_st_tlb_st.io)
   val dtlb_prefetch = Seq(dtlb_prefetch_tlb_prefetch.io)
+  val dtlb_tmu = Seq(dtlb_tmu_tlb_tmu.io)
   /* tlb vec && constant variable */
-  val dtlb = dtlb_ld ++ dtlb_st ++ dtlb_prefetch
-  val (dtlb_ld_idx, dtlb_st_idx, dtlb_pf_idx) = (0, 1, 2)
-  val TlbSubSizeVec = Seq(LduCnt + HyuCnt + 1, StaCnt, 2) // (load + hyu + stream pf, store, sms+l2bop)
+  val dtlb = dtlb_ld ++ dtlb_st ++ dtlb_prefetch ++ dtlb_tmu
+  val (dtlb_ld_idx, dtlb_st_idx, dtlb_pf_idx, dtlb_tmu_idx) = (0, 1, 2, 3)
+  val TlbSubSizeVec = Seq(LduCnt + HyuCnt + 1, StaCnt, 2, 1) // (load + hyu + stream pf, store, sms+l2bop, tmu)
   val DTlbSize = TlbSubSizeVec.sum
   val TlbStartVec = TlbSubSizeVec.scanLeft(0)(_ + _).dropRight(1)
   val TlbEndVec = TlbSubSizeVec.scanLeft(0)(_ + _).drop(1)
@@ -740,11 +793,9 @@ class MemBlockInlinedImp(outer: MemBlockInlined) extends LazyModuleImp(outer)
     val vector_hit = if (refillBothTlb) Cat(ptw_resp_next.vector).orR
       else if (i < TlbEndVec(dtlb_ld_idx)) Cat(ptw_resp_next.vector.slice(TlbStartVec(dtlb_ld_idx), TlbEndVec(dtlb_ld_idx))).orR
       else if (i < TlbEndVec(dtlb_st_idx)) Cat(ptw_resp_next.vector.slice(TlbStartVec(dtlb_st_idx), TlbEndVec(dtlb_st_idx))).orR
-      else                                 Cat(ptw_resp_next.vector.slice(TlbStartVec(dtlb_pf_idx), TlbEndVec(dtlb_pf_idx))).orR
-    ptwio.req(i).valid := tlb.valid &&
-      !(ptw_resp_v && vector_hit &&
-        ptw_resp_next.data.hit(tlb.bits.vpn, tlbcsr.satp.asid, tlbcsr.vsatp.asid, tlbcsr.hgatp.vmid,
-          allType = true, ignoreAsid = true)) // // Maybe need not ignoreAsid here, however not a functional bug
+      else if (i < TlbEndVec(dtlb_pf_idx)) Cat(ptw_resp_next.vector.slice(TlbStartVec(dtlb_pf_idx), TlbEndVec(dtlb_pf_idx))).orR
+      else                                 Cat(ptw_resp_next.vector.drop(TlbStartVec(dtlb_tmu_idx))).orR
+    ptwio.req(i).valid := tlb.valid && !(ptw_resp_v && vector_hit && ptw_resp_next.data.hit(tlb.bits.vpn, tlbcsr.satp.asid, tlbcsr.vsatp.asid, tlbcsr.hgatp.vmid, allType = true, ignoreAsid = true))
   }
   dtlb.foreach(_.ptw.resp.bits := ptw_resp_next.data)
   if (refillBothTlb) {
@@ -753,10 +804,13 @@ class MemBlockInlinedImp(outer: MemBlockInlined) extends LazyModuleImp(outer)
     dtlb_ld.foreach(_.ptw.resp.valid := ptw_resp_v && Cat(ptw_resp_next.vector.slice(TlbStartVec(dtlb_ld_idx), TlbEndVec(dtlb_ld_idx))).orR)
     dtlb_st.foreach(_.ptw.resp.valid := ptw_resp_v && Cat(ptw_resp_next.vector.slice(TlbStartVec(dtlb_st_idx), TlbEndVec(dtlb_st_idx))).orR)
     dtlb_prefetch.foreach(_.ptw.resp.valid := ptw_resp_v && Cat(ptw_resp_next.vector.slice(TlbStartVec(dtlb_pf_idx), TlbEndVec(dtlb_pf_idx))).orR)
+    dtlb_tmu.foreach(_.ptw.resp.valid := ptw_resp_v && Cat(ptw_resp_next.vector.drop(TlbStartVec(dtlb_tmu_idx))).orR)
   }
   dtlb_ld.foreach(_.ptw.resp.bits.getGpa := Cat(ptw_resp_next.getGpa.take(LduCnt + HyuCnt + 1)).orR)
   dtlb_st.foreach(_.ptw.resp.bits.getGpa := Cat(ptw_resp_next.getGpa.slice(LduCnt + HyuCnt + 1, LduCnt + HyuCnt + 1 + StaCnt)).orR)
-  dtlb_prefetch.foreach(_.ptw.resp.bits.getGpa := Cat(ptw_resp_next.getGpa.drop(LduCnt + HyuCnt + 1 + StaCnt)).orR)
+  // dtlb_prefetch.foreach(_.ptw.resp.bits.getGpa := Cat(ptw_resp_next.getGpa.drop(LduCnt + HyuCnt + 1 + StaCnt)).orR)
+  dtlb_prefetch.foreach(_.ptw.resp.bits.getGpa := Cat(ptw_resp_next.getGpa.slice(TlbStartVec(dtlb_pf_idx), TlbEndVec(dtlb_pf_idx))).orR)
+  dtlb_tmu.foreach(_.ptw.resp.bits.getGpa := Cat(ptw_resp_next.getGpa.drop(TlbStartVec(dtlb_tmu_idx))).orR)
 
   val dtlbRepeater  = PTWNewFilter(ldtlbParams.fenceDelay, ptwio, ptw.io.tlb(1), sfence, tlbcsr, l2tlbParams.dfilterSize)
   val itlbRepeater3 = PTWRepeaterNB(passReady = false, itlbParams.fenceDelay, io.fetch_to_mem.itlb, ptw.io.tlb(0), sfence, tlbcsr)
@@ -1372,6 +1426,12 @@ class MemBlockInlinedImp(outer: MemBlockInlined) extends LazyModuleImp(outer)
     stOut(0).bits  := storeMisalignBuffer.io.writeBack.bits
   }
 
+
+  // tmu dtlb
+  io.ooo_to_mem.tmuTlb <> dtlb_tmu.head.requestor(0)
+  pmp_check(TlbStartVec(dtlb_tmu_idx)).resp <> DontCare
+
+
   // Uncache
   uncache.io.enableOutstanding := io.ooo_to_mem.csrCtrl.uncache_write_outstanding_enable
   uncache.io.hartId := io.hartId
@@ -1490,8 +1550,9 @@ class MemBlockInlinedImp(outer: MemBlockInlined) extends LazyModuleImp(outer)
   io.mem_to_ooo.lqDeqPtr := lsq.io.lqDeqPtr
   lsq.io.tl_d_channel <> dcache.io.lsu.tl_d_channel
 
-  // LSQ to store buffer
-  lsq.io.sbuffer        <> sbuffer.io.in
+
+  lsq.io.sbuffer           <> sbuffer.io.in
+  io.ooo_to_mem.tmuSbuffer <> sbuffer.io.tmu_in
   sbuffer.io.in(0).valid := lsq.io.sbuffer(0).valid || vSegmentUnit.io.sbuffer.valid
   sbuffer.io.in(0).bits  := Mux1H(Seq(
     vSegmentUnit.io.sbuffer.valid -> vSegmentUnit.io.sbuffer.bits,

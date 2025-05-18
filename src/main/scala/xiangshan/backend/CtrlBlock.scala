@@ -689,6 +689,8 @@ class CtrlBlockImp(
   enqRob.canAccept := rob.io.enq.canAccept
   enqRob.canAcceptForDispatch := rob.io.enq.canAcceptForDispatch
   enqRob.isEmpty := rob.io.enq.isEmpty
+  enqRob.hasLoadStore := rob.io.enq.hasLoadStore
+  enqRob.hasTileLS    := rob.io.enq.hasTileLS
   enqRob.resp := rob.io.enq.resp
   enqRob.needAlloc := RegNext(dispatch.io.enqRob.needAlloc)
   enqRob.req.zip(dispatch.io.enqRob.req).map { case (sink, source) =>
@@ -698,6 +700,8 @@ class CtrlBlockImp(
   dispatch.io.enqRob.canAccept := enqRob.canAcceptForDispatch && !enqRob.req.map(x => x.valid && x.bits.blockBackward && enqRob.canAccept).reduce(_ || _)
   dispatch.io.enqRob.canAcceptForDispatch := enqRob.canAcceptForDispatch
   dispatch.io.enqRob.isEmpty := enqRob.isEmpty && !enqRob.req.map(_.valid).reduce(_ || _)
+  dispatch.io.enqRob.hasLoadStore := enqRob.hasLoadStore
+  dispatch.io.enqRob.hasTileLS    := enqRob.hasTileLS
   dispatch.io.enqRob.resp := enqRob.resp
   rob.io.enq.needAlloc := enqRob.needAlloc
   rob.io.enq.req := enqRob.req
@@ -717,6 +721,7 @@ class CtrlBlockImp(
   dispatch.io.wakeUpAll.wakeUpVec := io.toDispatch.wakeUpVec
   dispatch.io.wakeUpAll.wakeUpMem := io.toDispatch.wakeUpMem
   dispatch.io.IQValidNumVec := io.toDispatch.IQValidNumVec
+  dispatch.io.IQHasXtmVec := io.toDispatch.IQHasXtmVec
   dispatch.io.ldCancel := io.toDispatch.ldCancel
   dispatch.io.og0Cancel := io.toDispatch.og0Cancel
   dispatch.io.wbPregsInt := io.toDispatch.wbPregsInt
@@ -885,6 +890,7 @@ class CtrlBlockIO()(implicit p: Parameters, params: BackendParams) extends XSBun
     val exuNum = allExuParams.size
     val maxIQSize = allIssueParams.map(_.numEntries).max
     val IQValidNumVec = Vec(exuNum, Input(UInt(maxIQSize.U.getWidth.W)))
+    val IQHasXtmVec   = Vec(allIssueParams.size, Input(Bool()))
     val og0Cancel = Input(ExuVec())
     val ldCancel = Vec(backendParams.LdExuCnt, Flipped(new LoadCancelIO))
     val wbPregsInt = Vec(backendParams.numPregWb(IntData()), Flipped(ValidIO(UInt(PhyRegIdxWidth.W))))

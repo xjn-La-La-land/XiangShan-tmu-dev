@@ -71,17 +71,20 @@ object FuType extends OHEnumeration {
   val vsegldu = addType(name = "vsegldu")
   val vsegstu = addType(name = "vsegstu")
 
+  // HINT: tile
+  val tmu = addType(name = "tmu")
+
   val intArithAll = Seq(jmp, brh, i2f, i2v, csr, alu, mul, div, fence, bku)
   // dq0 includes int's iq0 and iq1
   // dq1 includes int's iq2 and iq3
-  def dq0OHTypeSeq(implicit p: Parameters): Seq[Seq[OHType]] = {
+  def dq0OHTypeSeq(implicit p: Parameters): Seq[Seq[OHType]] = { // HINT: iq0和iq1能接收的指令类型
     val intIQParams = p(XSCoreParamsKey).backendParams.intSchdParams.get.issueBlockParams
     val dq0IQNums = intIQParams.size / 2
     val iqParams = intIQParams.take(dq0IQNums)
     val exuParams = iqParams.map(_.exuBlockParams).flatten
     exuParams.map(_.fuConfigs.map(_.fuType))
   }
-  def dq1OHTypeSeq(implicit p: Parameters): Seq[Seq[OHType]] = {
+  def dq1OHTypeSeq(implicit p: Parameters): Seq[Seq[OHType]] = { // HINT: iq2和iq3能接收的指令类型
     val intIQParams = p(XSCoreParamsKey).backendParams.intSchdParams.get.issueBlockParams
     val dq0IQNums = intIQParams.size / 2
     val iqParams = intIQParams.slice(dq0IQNums,intIQParams.size)
@@ -211,6 +214,9 @@ object FuType extends OHEnumeration {
 
   def isVectorNeedFrm(fuType: UInt): Bool = FuTypeOrR(fuType, vectorNeedFrm)
 
+  // HINT: Xtm instruction
+  def isTmu(fuType: UInt): Bool = FuTypeOrR(fuType, tmu)
+
   object FuTypeOrR {
     def apply(fuType: UInt, fu0: OHType, fus: OHType*): Bool = {
       apply(fuType, fu0 +: fus)
@@ -260,7 +266,8 @@ object FuType extends OHEnumeration {
     vfalu -> "vfalu",
     vfma -> "vfma",
     vfdiv -> "vfdiv",
-    vfcvt -> "vfcvt"
+    vfcvt -> "vfcvt",
+    tmu -> "tmu"
   )
 }
 

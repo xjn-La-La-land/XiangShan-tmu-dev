@@ -29,9 +29,13 @@ import xiangshan.backend.datapath.WbConfig.{PregWB, _}
 import xiangshan.backend.fu.FuType
 import xiangshan.backend.fu.vector.Bundles.{VType, Vxrm}
 import xiangshan.backend.fu.fpu.Bundles.Frm
-import xiangshan.backend.fu.wrapper.{CSRInput, CSRToDecode}
+import xiangshan.backend.fu.wrapper.{CSRInput, CSRToDecode, Tmu}
+import xiangshan.cache.mmu.TlbRequestIO
+import xiangshan.backend.fu.{TmuParams,TmuMemBus}
+import freechips.rocketchip.tilelink.TLClientNode
+import xiangshan.cache.DCacheLineReq
 
-class ExeUnitIO(params: ExeUnitParams)(implicit p: Parameters) extends XSBundle {
+class ExeUnitIO(params: ExeUnitParams)(implicit p: Parameters) extends XSBundle with TmuParams {
   val flush = Flipped(ValidIO(new Redirect()))
   val in = Flipped(DecoupledIO(new ExuInput(params, hasCopySrc = true)))
   val out = DecoupledIO(new ExuOutput(params))
@@ -45,9 +49,14 @@ class ExeUnitIO(params: ExeUnitParams)(implicit p: Parameters) extends XSBundle 
   val vlIsZero = Option.when(params.writeVConfig)(Output(Bool()))
   val vlIsVlmax = Option.when(params.writeVConfig)(Output(Bool()))
   val instrAddrTransType = Option.when(params.hasJmpFu || params.hasBrhFu)(Input(new AddrTransType))
+  // tmu memory io
+  val tmuTlb    = Option.when(params.hasTmuFu)(new TlbRequestIO())
+  val tmuMemBus = Option.when(params.hasTmuFu)(Vec(numL2CReadPort, new TmuMemBus))
+  val tmuSbuffer = Option.when(params.hasTmuFu)(Decoupled(new DCacheLineReq))
+  // val tmuDcache = Option.when(params.hasTmuFu)(Flipped(new DCacheToSbufferIO))
 }
 
-class ExeUnit(val exuParams: ExeUnitParams)(implicit p: Parameters) extends LazyModule {
+class ExeUnit(val exuParams: ExeUnitParams)(implicit p: Parameters) extends LazyModule with TmuParams {
   override def shouldBeInlined: Boolean = false
 
   lazy val module = new ExeUnitImp(this)(p, exuParams)
@@ -125,7 +134,8 @@ class ExeUnitImp(
   }
 
   val busy = RegInit(false.B)
-  if (exuParams.latencyCertain){
+  // HINT: 对 tmu 所在的 exu，希望指令非阻塞进入
+  if (exuParams.latencyCertain || exuParams.hasTmuFu){
     busy := false.B
   }
   else {
@@ -406,6 +416,17 @@ class ExeUnitImp(
   io.out.bits.debug     := 0.U.asTypeOf(io.out.bits.debug)
   io.out.bits.debug.isPerfCnt := funcUnits.map(_.io.csrio.map(_.isPerfCnt)).map(_.getOrElse(false.B)).reduce(_ || _)
   io.out.bits.debugInfo := Mux1H(fuOutValidOH, fuOutBitsVec.map(_.perfDebugInfo))
+  io.out.bits.debug_seqNum := Mux1H(fuOutValidOH, fuOutBitsVec.map(_.debug_seqNum))
+
+  // tmu memory io connection
+  if(exuParams.hasTmuFu) {
+    require(funcUnits.filter(_.isInstanceOf[Tmu]).size == 1, "Tmu is not found in funcUnits")
+    val tmu = funcUnits.filter(_.isInstanceOf[Tmu]).head.asInstanceOf[Tmu]
+    io.tmuTlb.get <> tmu.io.tmuTlb.get
+    io.tmuMemBus.get <> tmu.io.tmuMemBus.get
+    io.tmuSbuffer.get <> tmu.io.tmuSbuffer.get
+  }
+
   io.out.bits.debug_seqNum := Mux1H(fuOutValidOH, fuOutBitsVec.map(_.debug_seqNum))
 }
 

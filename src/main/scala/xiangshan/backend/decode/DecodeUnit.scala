@@ -567,6 +567,24 @@ object XSTrapDecode extends DecodeConstants {
   )
 }
 
+
+// HINT: RISCV Xtm extension decode constants
+object XtmDecode extends DecodeConstants {
+  override val decodeArray: Array[(BitPat, XSDecodeBase)] = Array(
+    // TILELOADD  -> XSDecode(SrcType.reg, SrcType.reg, SrcType.X, FuType.tmu, TMUOpType.tileload,  SelImm.IMM_S, noSpec = T, blockBack = T),
+    // TILESTORED -> XSDecode(SrcType.reg, SrcType.reg, SrcType.X, FuType.tmu, TMUOpType.tilestore, SelImm.IMM_S, noSpec = T, blockBack = T),
+    TILELOADD   -> XSDecode(SrcType.reg, SrcType.reg, SrcType.X, FuType.tmu, TMUOpType.tileload,   SelImm.IMM_S),
+    TILELOADDT1 -> XSDecode(SrcType.reg, SrcType.reg, SrcType.X, FuType.tmu, TMUOpType.tileloadt1, SelImm.IMM_S),
+    TILESTORED  -> XSDecode(SrcType.reg, SrcType.reg, SrcType.X, FuType.tmu, TMUOpType.tilestore,  SelImm.IMM_S),
+
+    TDPBSSD     -> XSDecode(SrcType.reg, SrcType.reg, SrcType.X, FuType.tmu, TMUOpType.tdpbss,     SelImm.IMM_S),
+    TDPBSUD     -> XSDecode(SrcType.X  , SrcType.X  , SrcType.X, FuType.tmu, TMUOpType.tdpbsu,     SelImm.IMM_S),
+    TDPBUSD     -> XSDecode(SrcType.X  , SrcType.X  , SrcType.X, FuType.tmu, TMUOpType.tdpbus,     SelImm.IMM_S),
+    TDPBUUD     -> XSDecode(SrcType.X  , SrcType.X  , SrcType.X, FuType.tmu, TMUOpType.tdpbuu,     SelImm.IMM_S),
+  )
+}
+
+
 abstract class Imm(val len: Int) {
   def toImm32(minBits: UInt): UInt = do_toImm32(minBits(len - 1, 0))
   def do_toImm32(minBits: UInt): UInt
@@ -814,7 +832,8 @@ class DecodeUnit(implicit p: Parameters) extends XSModule with DecodeUnitConstan
     VecDecoder.table ++
     ZicondDecode.table ++
     ZimopDecode.table ++
-    ZfaDecode.table
+    ZfaDecode.table ++
+    XtmDecode.table  // HINT: add Xtm extension decode table
 
   require(decode_table.map(_._2.length == 15).reduce(_ && _), "Decode tables have different column size")
   // assertion for LUI: only LUI should be assigned `selImm === SelImm.IMM_U && fuType === FuType.alu`
@@ -841,7 +860,7 @@ class DecodeUnit(implicit p: Parameters) extends XSModule with DecodeUnitConstan
   val isZimop = (BitPat("b1?00??0111??_?????_100_?????_1110011") === ctrl_flow.instr) ||
                 (BitPat("b1?00??1?????_?????_100_?????_1110011") === ctrl_flow.instr)
 
-  val isMove = BitPat("b000000000000_?????_000_?????_0010011") === ctrl_flow.instr
+  val isMove = BitPat("b000000000000_?????_000_?????_0010011") === ctrl_flow.instr  // HINT: addi rd, rs1, 0
   // temp decode zimop as move
   decodedInst.isMove := (isMove || isZimop) && ctrl_flow.instr(RD_MSB, RD_LSB) =/= 0.U && !io.csrCtrl.singlestep
 
@@ -938,8 +957,9 @@ class DecodeUnit(implicit p: Parameters) extends XSModule with DecodeUnitConstan
   private val isAMO = FuType.isAMO(decodedInst.fuType)
   private val isVStore = FuType.isVStore(decodedInst.fuType)
   private val isBranch = !decodedInst.preDecodeInfo.notCFI || FuType.isJump(decodedInst.fuType)
+  private val isTileLS = FuType.isTmu(decodedInst.fuType) && TMUOpType.isTileLS(decodedInst.fuOpType)
 
-  decodedInst.commitType := Cat(isLs | isVls, (isStore && !isAMO) | isVStore | isBranch)
+  decodedInst.commitType := Cat(isTileLS, 0.U(1.W), isLs | isVls, (isStore && !isAMO) | isVStore | isBranch)
 
   decodedInst.isVset := FuType.isVset(decodedInst.fuType)
 
