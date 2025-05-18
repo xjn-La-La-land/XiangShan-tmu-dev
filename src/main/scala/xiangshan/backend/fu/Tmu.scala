@@ -27,7 +27,7 @@ trait TmuParams extends HasXSParameter {
   val row_addr_offset_w = log2Ceil(row_data_w)
 
   val num_tilerf_readPort  = 4
-  val num_tilerf_writePort = 3
+  val num_tilerf_writePort = 2
 
   val tdpIBuf_sz = 4 // tdpUnit 能容纳的最大指令数量+1
   val tlsIBuf_sz = 3 // tlsQueue 能容纳的最大指令数量+1
@@ -372,8 +372,7 @@ class TmuModule (implicit p: Parameters) extends XSModule with TmuParams {
     tdpUnit.io.tileData.tmmBRead,
   )
   val writePorts = Seq(
-    tlsQueue.io.tileData.tmmWrite(0),
-    tlsQueue.io.tileData.tmmWrite(1),
+    tlsQueue.io.tileData.tmmWrite,
     tdpUnit.io.tileData.tmmCWrite,
   )
 
@@ -679,7 +678,7 @@ class TileLSQEntry(implicit p: Parameters) extends XSBundle with TileLSQParams {
 
 class TileLSUnitToTiles(implicit val p: Parameters) extends Bundle with TileLSQParams {
   val tmmRead  = new TilesReadPort
-  val tmmWrite = Vec(numL2CReadPort, new TilesWritePort)
+  val tmmWrite = new TilesWritePort
 }
 
 // Tmu l2-cache load mem bus
@@ -928,10 +927,12 @@ class TmuL2CLoadUnit(implicit p: Parameters) extends XSModule with TileLSQParams
   val io = IO(new Bundle {
     val tlReqEntry  = Flipped(Vec(numL2CReadPort, Decoupled(new TileLSQEntry)))
     val memBus      = Vec(numL2CReadPort, new TmuMemBus)
-    val tmmWrite    = Vec(numL2CReadPort, new TilesWritePort)
+    val tmmWrite    = new TilesWritePort
     val tlRespId    = Output(Vec(numL2CReadPort, Valid(UInt(log2Ceil(tileLSQ_sz).W))))
     val tlRespEntry = Flipped(Vec(numL2CReadPort, new TileLSQEntry))
   })
+
+  val tmmWriteArb = Module(new FastArbiter(new TilesWritePort, numL2CReadPort))
 
   for(i <- 0 until numL2CReadPort) {
     // l2-cache req
@@ -942,7 +943,6 @@ class TmuL2CLoadUnit(implicit p: Parameters) extends XSModule with TileLSQParams
     memBus.req.bits.paddr  := reqEntry.bits.paddr
     reqEntry.ready         := memBus.req.ready
     // l2-cache resp
-    memBus.resp.ready := true.B // always ready to receive response
     val tlResp_cnt = DataTransCnt(l2TldNumBurst)
     val l2Rdata_buf = Reg(Vec(l2TldNumBurst-1, UInt(l2TldDataWidth.W)))
     when(memBus.resp.fire) {
@@ -953,12 +953,22 @@ class TmuL2CLoadUnit(implicit p: Parameters) extends XSModule with TileLSQParams
     }
     io.tlRespId(i).bits  := Cat(memBus.resp.bits.source, i.U)
     io.tlRespId(i).valid := memBus.resp.fire && tlResp_cnt.last // tilelink D channel transfer done
+
     // write back to tile register
-    io.tmmWrite(i).wen   := io.tlRespId(i).valid
-    io.tmmWrite(i).wtile := io.tlRespEntry(i).tmm
-    io.tmmWrite(i).wrow  := io.tlRespEntry(i).row
-    io.tmmWrite(i).wdata := Cat(memBus.resp.bits.rdata, l2Rdata_buf.asUInt)
+    tmmWriteArb.io.in(i).valid := memBus.resp.valid && tlResp_cnt.last
+    memBus.resp.ready := Mux(tlResp_cnt.last, tmmWriteArb.io.in(i).ready, true.B)
+
+    val writeEntry = Wire(new TilesWritePort)
+    writeEntry.wen   := io.tlRespId(i).valid
+    writeEntry.wtile := io.tlRespEntry(i).tmm
+    writeEntry.wrow  := io.tlRespEntry(i).row
+    writeEntry.wdata := Cat(memBus.resp.bits.rdata, l2Rdata_buf.asUInt)
+    tmmWriteArb.io.in(i).bits := writeEntry
   }
+
+  tmmWriteArb.io.out.ready := true.B
+  io.tmmWrite := tmmWriteArb.io.out.bits
+  io.tmmWrite.wen := tmmWriteArb.io.out.valid && tmmWriteArb.io.out.bits.wen
 }
 
 //////////////////////////////////////
