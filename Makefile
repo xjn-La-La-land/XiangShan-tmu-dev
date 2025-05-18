@@ -281,9 +281,9 @@ pldm-debug:
 # TODO: wave -> 查看生成的波形
 WAVE_DIR = $(NOOP_HOME)/wave
 check-wave: # gtkwave is too stupid!
-	@if [ -f "$(WAVE_DIR)/wave.vcd" ]; then \
+	@if [ -f "$(WAVE_DIR)/wave.fst" ]; then \
 		echo "Opening GTKWave with dump.vcd..."; \
-		gtkwave -o -c 10 --dark --autosavename --saveonexit "$(WAVE_DIR)/wave.vcd"; \
+		gtkwave -o -c 80 --dark --autosavename --saveonexit "$(WAVE_DIR)/wave.fst"; \
 	else \
 		echo "Waveform file does not exist!"; \
 	fi
