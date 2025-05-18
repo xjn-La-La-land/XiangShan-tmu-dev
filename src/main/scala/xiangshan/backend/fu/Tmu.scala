@@ -199,6 +199,7 @@ class TmuInstBuf (implicit p: Parameters) extends XSModule with TDPUnitParams wi
       val tmm   = UInt(tile_idx_w.W)
       val valid = Bool()
     })
+    e := DontCare
     e.valid := false.B
     e
   }))
