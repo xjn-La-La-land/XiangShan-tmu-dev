@@ -325,8 +325,8 @@ class TmuModule (implicit p: Parameters) extends XSModule with TmuParams {
              p"vaddr = 0x${Hexadecimal(io.in.bits.base_vaddr)}, " +
              p"stride = 0x${Hexadecimal(io.in.bits.stride)}\n")
     }.elsewhen(io.in.bits.isTdp) {
-      val tmmA_sign = Mux(io.in.bits.tmmA_sign, "s".U, "u".U)
-      val tmmB_sign = Mux(io.in.bits.tmmB_sign, "s".U, "u".U)
+      val tmmA_sign = Mux(io.in.bits.tmmA_sign, 's'.U, 'u'.U)
+      val tmmB_sign = Mux(io.in.bits.tmmB_sign, 's'.U, 'u'.U)
       printf(p"[TMU] tdpb${Character(tmmA_sign)}${Character(tmmB_sign)}d " +
              p"tmm${io.in.bits.tmmC}, tmm${io.in.bits.tmmA}, tmm${io.in.bits.tmmB}\n")
     }.otherwise {
