@@ -317,11 +317,18 @@ class TmuModule (implicit p: Parameters) extends XSModule with TmuParams {
   // for debug
   when(io.in.fire) {
     when(io.in.bits.isTileLS && !io.in.bits.isWrite) {
-      printf(p"[TMU] tileloadd tmm${io.in.bits.tmmC}, vaddr = 0x${Hexadecimal(io.in.bits.base_vaddr)}, stride = 0x${Hexadecimal(io.in.bits.stride)}\n")
+      printf(p"[TMU] tileloadd tmm${io.in.bits.tmmC}, " +
+              "vaddr = 0x${Hexadecimal(io.in.bits.base_vaddr)}, " +
+              "stride = 0x${Hexadecimal(io.in.bits.stride)}\n")
     }.elsewhen(io.in.bits.isTileLS && io.in.bits.isWrite) {
-      printf(p"[TMU] tilestored tmm${io.in.bits.tmmC}, vaddr = 0x${Hexadecimal(io.in.bits.base_vaddr)}, stride = 0x${Hexadecimal(io.in.bits.stride)}\n")
+      printf(p"[TMU] tilestored tmm${io.in.bits.tmmC}, " +
+              "vaddr = 0x${Hexadecimal(io.in.bits.base_vaddr)}, " +
+              "stride = 0x${Hexadecimal(io.in.bits.stride)}\n")
     }.elsewhen(io.in.bits.isTdp) {
-      printf(p"[TMU] tdpb??d tmm${io.in.bits.tmmC}, tmm${io.in.bits.tmmA}, tmm${io.in.bits.tmmB}, sign = ${io.in.bits.tmmA_sign}, ${io.in.bits.tmmB_sign}\n")
+      val tmmA_sign = Mux(io.in.bits.tmmA_sign, "s".U, "u".U)
+      val tmmB_sign = Mux(io.in.bits.tmmB_sign, "s".U, "u".U)
+      printf(p"[TMU] tdpb${Character(tmmA_sign)}${Character(tmmB_sign)}d " +
+              "tmm${io.in.bits.tmmC}, tmm${io.in.bits.tmmA}, tmm${io.in.bits.tmmB}\n")
     }.otherwise {
       printf(p"[TMU] unknown tmu op!\n")
     }
