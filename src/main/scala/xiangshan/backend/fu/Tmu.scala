@@ -26,8 +26,8 @@ trait TmuParams extends HasXSParameter {
   val row_data_w : Int = numTcolsb * 8
   val row_addr_offset_w = log2Ceil(row_data_w)
 
-  val num_tilerf_readPort  = 4
-  val num_tilerf_writePort = 2
+  val num_tilerf_readPort  = 3 + 1 // 3 read ports for tdpUnit, 1 read port for tlsQueue
+  val num_tilerf_writePort = 1 + 1 // 1 write port for tdpUnit, 1 write port for tlsQueue
 
   val tdpIBuf_sz = 4 // tdpUnit 能容纳的最大指令数量+1
   val tlsIBuf_sz = 3 // tlsQueue 能容纳的最大指令数量+1
@@ -152,14 +152,14 @@ class TileRegFile (implicit val p: Parameters) extends Module with TmuParams {
       readPort.rtile === i.U && readPort.ren
     })
     tiles(i).io.ren   := ParallelOR(ren_vec)
-    tiles(i).io.rrow  := ParallelPriorityMux(ren_vec, io.readPorts.map(_.rrow))
+    tiles(i).io.rrow  := Mux1H(ren_vec, io.readPorts.map(_.rrow)) // we make sure at most one ren is true for each tile
 
     val wen_vec = io.writePorts.map(writePort => {
       writePort.wtile === i.U && writePort.wen
     })
     tiles(i).io.wen   := ParallelOR(wen_vec)
-    tiles(i).io.wrow  := ParallelPriorityMux(wen_vec, io.writePorts.map(_.wrow))
-    tiles(i).io.wdata := ParallelPriorityMux(wen_vec, io.writePorts.map(_.wdata))
+    tiles(i).io.wrow  := Mux1H(wen_vec, io.writePorts.map(_.wrow)) // we make sure at most one wen is true for each tile
+    tiles(i).io.wdata := Mux1H(wen_vec, io.writePorts.map(_.wdata))
   }
 
   io.readPorts.foreach(readPort => {
@@ -213,7 +213,7 @@ class TmuInstBuf (implicit p: Parameters) extends XSModule with TDPUnitParams wi
   val tileB_busy_vec = VecInit((0 until numTileBbuf).map(i => tileBbufBusy(i)))
   val tileB_hit      = ParallelOR(tileB_hit_vec)
   val tileB_hit_idx  = PriorityEncoder(tileB_hit_vec)
-  val tileB_free_idx = PriorityEncoder(tileB_busy_vec.map(!_))
+  val tileB_free_idx = PriorityEncoder(~tileB_busy_vec.asUInt)
   io.tdpStageCtrl.tileBbufInfo.nextPtr := Mux(tileB_hit, tileB_hit_idx, tileB_free_idx)
   io.tdpStageCtrl.tileBbufInfo.hit     := tileB_hit
 
@@ -474,7 +474,7 @@ class TDPUnit(implicit p: Parameters) extends XSModule with TDPUnitParams {
   val tileA_words = VecInit.tabulate(numTrows) { r => tileA_buf(r)(31, 0) }
   val tileC_words = VecInit.tabulate(numTrows, numTcolsw) { (r, c) => tileC_buf(r)(c*32+31, c*32) }
 
-  // Stage 0: push tmmB into tileB_buf
+  // Stage 0: push tileB into tileB_buf
   val s0_out_valid = Wire(Bool())
   val s1_in_ready  = Wire(Bool())
   val s0_s1_fire   = s0_out_valid && s1_in_ready
@@ -505,7 +505,7 @@ class TDPUnit(implicit p: Parameters) extends XSModule with TDPUnitParams {
   io.tdp_in.ready := (s0_s1_fire || !s0_info.valid) && io.stageCtrl.stageAllowIn(0)
 
   
-  // Stage 1: push tmmC into tileC_buf, push tmmA into tileA_buf
+  // Stage 1: push tileC into tileC_buf, push tileA into tileA_buf
   val s1_out_valid = Wire(Bool())
   val s2_in_ready  = Wire(Bool())
   val s1_s2_fire   = s1_out_valid && s2_in_ready
@@ -543,27 +543,30 @@ class TDPUnit(implicit p: Parameters) extends XSModule with TDPUnitParams {
   val DPAMatrix = Seq.fill(numTrows)(Seq.fill(numTcolsw)(DPAUnit("int8")))
   for (i <- 0 until numTrows) {
     for (j <- 0 until numTcolsw) {
-      val tileB_buf_ptr = Mux(s2_info.valid && s2_row_walk_ptr.walk_past(i), s2_tileB_buf_ptr, s1_tileB_buf_ptr)
-      val tdpOp         = Mux(s2_info.valid && s2_row_walk_ptr.walk_past(i), s2_info.regs.tdpOp, s1_info.regs.tdpOp)
+      val is_s2 = s2_info.valid && s2_row_walk_ptr.walk_past(i)
+      val tileB_buf_ptr = Mux(is_s2, s2_tileB_buf_ptr, s1_tileB_buf_ptr)
+      val tdpOp         = Mux(is_s2, s2_info.regs.tdpOp, s1_info.regs.tdpOp)
       DPAMatrix(i)(j).connect_in(tileA_words(i), tileB_words(tileB_buf_ptr)(i)(j), tileC_words(i)(j), tdpOp)
     }
   }
-  val DPAMatrixPop = VecInit((0 until numTcolsw).map(c => DPAMatrix(numTrows-1)(c).out)).asUInt  // data pop from the last line
+  def DPAMatrixLineOut(r: Int): UInt = {
+    require(r >= 0 && r < numTrows)
+    VecInit((0 until numTcolsw).map(c => DPAMatrix(r)(c).out)).asUInt
+  }
 
   val s1_move = s1_info.valid && !s1_row_walk_ptr.overflow
   val s2_move = s2_info.valid && !s2_row_walk_ptr.overflow
-  val row_move = s1_move || s2_move
 
   // tileA_buf and tileC_buf data move
-  when(row_move) {
+  when(s1_move || s2_move) {
     for (r <- 0 until numTrows) {
-      if(r == 0) {
+      if(r == 0) { // pump tileA and tileC into the first row
         tileA_buf(r) := io.tileData.tmmARead.rdata
         tileC_buf(r) := io.tileData.tmmCRead.rdata
       } else {
         var w = tileA_buf(r-1).getWidth
         tileA_buf(r) := tileA_buf(r-1)(w-1, 32) // move the remaining data in (r-1)_th row to r_th row
-        tileC_buf(r) := VecInit((0 until numTcolsw).map(c => DPAMatrix(r-1)(c).out)).asUInt // move the temp results in (r-1)_th row to r_th row
+        tileC_buf(r) := DPAMatrixLineOut(r-1)   // move the temp results in (r-1)_th row to r_th row
       }
     }
   }
@@ -585,7 +588,7 @@ class TDPUnit(implicit p: Parameters) extends XSModule with TDPUnitParams {
   io.tileData.tmmCWrite.wen   := s2_wen.asUInt.orR
   io.tileData.tmmCWrite.wtile := s2_info.regs.tmmC
   io.tileData.tmmCWrite.wrow  := s2_row_walk_ptr.value
-  io.tileData.tmmCWrite.wdata := DPAMatrixPop
+  io.tileData.tmmCWrite.wdata := DPAMatrixLineOut(numTrows-1) // write back the last row data to tileC_buf
 
   s0_stall := s0_ren.zip(s1_ren).map(r => r._1 && r._2).reduce(_ || _) || // s0 and s1 read the same tile
               s0_ren.zip(s2_wen).map(r => r._1 && r._2).reduce(_ || _)    // s0 read and s2 write the same tile
